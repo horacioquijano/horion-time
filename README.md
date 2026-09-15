@@ -305,4 +305,5 @@ Copyright © 2026 Horion Time S.A.S. Todos los derechos reservados.
 
 ---
 
-**Desarrollado con ❤️ por el equipo Horion Time**
+**Desarrollado con ❤️ por el equipo Horion Time**#   h o r i o n - t i m e  
+ 
