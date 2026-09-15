@@ -1,0 +1,8 @@
+RewriteEngine On
+
+# 1) Si el archivo o carpeta existe fisicamente, Apache lo sirve tal cual
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+
+# 2) Cualquier otra ruta (modulos) la procesa el router index.php
+RewriteRule ^ index.php [L]

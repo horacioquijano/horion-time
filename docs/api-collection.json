@@ -1,0 +1,113 @@
+{
+  "info": {
+    "name": "HORION TIME API",
+    "description": "API REST para integración con aplicaciones móviles, kioscos y sistemas de nómina",
+    "version": "1.0.0",
+    "base_url": "https://app.horiontime.co/api"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": "{{token}}"
+  },
+  "endpoints": [
+    {
+      "name": "Login",
+      "method": "POST",
+      "path": "/auth/login",
+      "auth_required": false,
+      "description": "Autenticar usuario y obtener JWT",
+      "body": {
+        "email": "admin@horiontime.co",
+        "password": "admin123"
+      },
+      "response": {
+        "success": true,
+        "data": {
+          "token": "eyJhbGciOiJIUzI1NiIs...",
+          "token_type": "Bearer",
+          "expires_in": 604800,
+          "usuario": { "id": 1, "nombre": "...", "rol": "SuperAdmin" }
+        }
+      }
+    },
+    {
+      "name": "Registrar Marcación",
+      "method": "POST",
+      "path": "/auth/registro-marcacion",
+      "auth_required": true,
+      "description": "Registrar entrada/salida desde app móvil",
+      "body": {
+        "tipo_marcacion": "entrada",
+        "sede_id": 1,
+        "metodo": "movil",
+        "lat": 4.6762,
+        "lng": -74.0521,
+        "foto": "data:image/jpeg;base64,..."
+      }
+    },
+    {
+      "name": "Obtener Asistencia de Usuario",
+      "method": "GET",
+      "path": "/usuarios/{id}/asistencia",
+      "auth_required": true,
+      "params": {
+        "fecha_inicio": "2026-09-01",
+        "fecha_fin": "2026-09-30"
+      }
+    },
+    {
+      "name": "Reporte de Asistencia",
+      "method": "GET",
+      "path": "/reportes/asistencia",
+      "auth_required": true,
+      "params": {
+        "fecha_inicio": "2026-09-01",
+        "fecha_fin": "2026-09-30",
+        "usuario_id": "opcional"
+      }
+    },
+    {
+      "name": "Refresh Token",
+      "method": "POST",
+      "path": "/auth/refresh",
+      "auth_required": true
+    },
+    {
+      "name": "Solicitar Novedad",
+      "method": "POST",
+      "path": "/novedades/solicitar",
+      "auth_required": true,
+      "status": "En desarrollo"
+    },
+    {
+      "name": "Solicitar Hora Extra",
+      "method": "POST",
+      "path": "/horas-extras/solicitar",
+      "auth_required": true,
+      "status": "En desarrollo"
+    },
+    {
+      "name": "Turnos Semanales",
+      "method": "GET",
+      "path": "/turnos/semanal",
+      "auth_required": true,
+      "status": "En desarrollo"
+    }
+  ],
+  "codigos_http": {
+    "200": "Éxito",
+    "201": "Creado",
+    "400": "Solicitud inválida",
+    "401": "No autenticado",
+    "403": "Sin permisos",
+    "404": "No encontrado",
+    "429": "Demasiadas peticiones (rate limit)",
+    "500": "Error interno"
+  },
+  "rate_limits": {
+    "POST /auth/login": "10 peticiones/minuto",
+    "POST /auth/registro-marcacion": "30 peticiones/minuto",
+    "GET /reportes": "20 peticiones/minuto",
+    "default": "100 peticiones/minuto"
+  }
+}

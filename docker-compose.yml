@@ -1,0 +1,94 @@
+version: '3.8'
+
+services:
+  # Aplicación PHP
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: horion_app
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./public/uploads:/var/www/html/public/uploads
+      - ./app:/var/www/html/app
+    environment:
+      - DB_HOST=db
+      - DB_NAME=horion_time
+      - DB_USER=horion_user
+      - DB_PASS=${DB_PASSWORD:-secure_password_123}
+      - JWT_SECRET=${JWT_SECRET:-change_this_secret_in_production}
+      - APP_ENV=production
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - horion_network
+
+  # Base de datos MySQL
+  db:
+    image: mysql:8.0
+    container_name: horion_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
+      MYSQL_DATABASE: horion_time
+      MYSQL_USER: horion_user
+      MYSQL_PASSWORD: ${DB_PASSWORD:-secure_password_123}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database:/docker-entrypoint-initdb.d
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - horion_network
+
+  # phpMyAdmin (opcional, solo desarrollo)
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: horion_pma
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    environment:
+      PMA_HOST: db
+      PMA_USER: root
+      PMA_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_password}
+    depends_on:
+      - db
+    networks:
+      - horion_network
+    profiles:
+      - dev
+
+  # Redis (para cache y colas)
+  redis:
+    image: redis:7-alpine
+    container_name: horion_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - horion_network
+    profiles:
+      - dev
+
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  horion_network:
+    driver: bridge
