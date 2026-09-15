@@ -1,7 +1,17 @@
 FROM php:8.2-apache
 
+# Librerías de sistema necesarias para compilar la extensión gd
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      zlib1g-dev \
+      libpng-dev \
+      libjpeg62-turbo-dev \
+      libfreetype6-dev \
+ && rm -rf /var/lib/apt/lists/*
+
 # Extensiones PHP que usa HORION TIME
-RUN docker-php-ext-install pdo_mysql mysqli gd
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
+ && docker-php-ext-install pdo_mysql mysqli gd
 
 # Rewrite + permitir .htaccess
 RUN a2enmod rewrite \
