@@ -8,6 +8,10 @@ spl_autoload_register(function ($class) {
     $baseDir = __DIR__ . '/../app/';
     $classPath = str_replace('\\', '/', $class);
     if (strpos($classPath, 'App/') === 0) $classPath = substr($classPath, 4);
+    
+    // Convertir Config a config (case-insensitive)
+    $classPath = str_replace('Config/', 'config/', $classPath);
+    
     $file = $baseDir . $classPath . '.php';
     if (file_exists($file)) require_once $file;
 });
