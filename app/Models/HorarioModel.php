@@ -144,24 +144,37 @@ class HorarioModel {
     // ========== Escrituras ==========
     public function crearHorario($data) {
         $cols = $this->columnas('horarios');
-        $fila = ['empresa_id' => (int)$data['empresa_id'], 'nombre' => $data['nombre']];
+        
+        // GARANTIZAR nombre (campo obligatorio)
+        $nombre = trim($data['nombre'] ?? '');
+        if ($nombre === '') {
+            $nombre = 'Horario ' . date('Y-m-d H:i');
+        }
+        
+        $fila = ['nombre' => $nombre];
+        
         $map = [
-            'descripcion'              => $data['descripcion'] ?? null,
-            'horas_semanales'          => $data['horas_semanales'] ?? 48,
-            'tipo'                     => $data['tipo'] ?? 'fijo',
-            'tolerancia_entrada'       => $data['tolerancia_entrada'] ?? 10,
-            'tolerancia_salida'        => $data['tolerancia_salida'] ?? 5,
-            'jornada_diurna_inicio'    => $data['jornada_diurna_inicio'] ?? '06:00:00',
-            'jornada_diurna_fin'       => $data['jornada_diurna_inicio'] ?? '22:00:00',
-            'jornada_nocturna_inicio'  => $data['jornada_nocturna_inicio'] ?? '22:00:00',
-            'jornada_nocturna_fin'     => $data['jornada_nocturna_fin'] ?? '06:00:00',
-            'descanso_almuerzo_inicio' => $data['descanso_almuerzo_inicio'] ?? '12:00:00',
-            'descanso_almuerzo_fin'    => $data['descanso_almuerzo_fin'] ?? '13:00:00',
-            'estado'                   => 'activo',
+            'empresa_id'              => (int)($data['empresa_id'] ?? $_SESSION['empresa_id'] ?? 1),
+            'descripcion'             => trim($data['descripcion'] ?? ''),
+            'horas_semanales'         => (float)($data['horas_semanales'] ?? 48),
+            'tipo'                    => $data['tipo'] ?? 'fijo',
+            'tolerancia_entrada'      => (int)($data['tolerancia_entrada'] ?? 10),
+            'tolerancia_salida'       => (int)($data['tolerancia_salida'] ?? 5),
+            'jornada_diurna_inicio'   => $data['jornada_diurna_inicio'] ?? '06:00:00',
+            'jornada_diurna_fin'      => $data['jornada_diurna_fin'] ?? '22:00:00',
+            'jornada_nocturna_inicio' => $data['jornada_nocturna_inicio'] ?? '22:00:00',
+            'jornada_nocturna_fin'    => $data['jornada_nocturna_fin'] ?? '06:00:00',
+            'descanso_almuerzo_inicio'=> $data['descanso_almuerzo_inicio'] ?? '12:00:00',
+            'descanso_almuerzo_fin'   => $data['descanso_almuerzo_fin'] ?? '13:00:00',
+            'estado'                  => 'activo',
         ];
-        foreach ($map as $k => $v) if (in_array($k, $cols, true)) $fila[$k] = $v;
-        $fila = array_intersect_key($fila, array_flip($cols));
-
+        
+        foreach ($map as $k => $v) {
+            if (!in_array($k, $cols, true)) continue;
+            if ($v === '' || $v === null) continue;
+            $fila[$k] = $v;
+        }
+        
         $campos = implode(', ', array_map(fn($k) => "`$k`", array_keys($fila)));
         $marks  = implode(', ', array_map(fn($k) => ":$k", array_keys($fila)));
         $st = $this->db->prepare("INSERT INTO horarios ($campos) VALUES ($marks)");
