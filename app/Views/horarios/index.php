@@ -248,7 +248,8 @@ function verDetalleHorario(id) {
             data.turnos.forEach(t => {
                 html += `<p><strong>${data.dias[t.dia_semana]}:</strong> ${t.hora_entrada} - ${t.hora_salida}</p>`;
             });
-            alert(html);
+            document.getElementById('modalTurnosBody').innerHTML = '<h3>Turnos del Horario</h3>' + loQueSigua;
+            document.getElementById('modalTurnos').style.display = 'block';
         });
 }
 </script>
