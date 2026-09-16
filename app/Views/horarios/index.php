@@ -248,15 +248,6 @@ try {
 }
 .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
 
-.modal-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 1000;
-    display: flex; align-items: center; justify-content: center; padding: 20px;
-    overflow-y: auto;
-}
-.modal-content {
-    background: #fff; border-radius: 16px; padding: 28px; max-height: 90vh; overflow-y: auto;
-    box-shadow: 0 20px 60px rgba(0,0,0,.35);
-}
 .tabla-turnos { width: 100%; border-collapse: collapse; margin-top: 8px; }
 .tabla-turnos th, .tabla-turnos td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; text-align: left; }
 .tabla-turnos th { background: #f8fafc; font-weight: 700; color: #334155; }
