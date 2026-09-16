@@ -25,4 +25,4 @@ RUN mkdir -p /var/www/html/horion-time/public/uploads/marcaciones \
 ENV PHP_CLI_SERVER_WORKERS=8
 
 EXPOSE 80
-CMD ["php", "-S", "0.0.0.0:80", "router.php"]
+CMD ["sh", "-c", "php -S [::]:${PORT:-80} router.php"]
