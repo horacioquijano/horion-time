@@ -2,7 +2,24 @@
 session_start();
 include(__DIR__ . '/../layouts/header.php');
 include(__DIR__ . '/../layouts/sidebar.php');
+
+// =====================================================================
+// AUTO-ABASTECIMIENTO: turnos agrupados por horario
+// =====================================================================
+$turnosPorHorario = [];
+try {
+    if (isset($db) && is_object($db)) {
+        $__pdo = $db;
+    } else {
+        $__pdo = \App\Config\Database::getInstance()->getConnection();
+    }
+    $__rows = $__pdo->query("SELECT horario_id, dia_semana, hora_entrada, hora_salida, es_descanso FROM turnos ORDER BY horario_id, dia_semana")->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($__rows as $__t) {
+        $turnosPorHorario[(int)$__t['horario_id']][] = $__t;
+    }
+} catch (Throwable $e) { /* si falla, la vista igual carga */ }
 ?>
+
 <main class="main-content">
 <div class="top-header">
     <h2 style="font-weight: 700; color: var(--text-dark);">
@@ -211,15 +228,47 @@ include(__DIR__ . '/../layouts/sidebar.php');
     </div>
 </div>
 
+<!-- Modal Ver Turnos (NUEVO) -->
+<div class="modal-overlay" id="modalTurnos" style="display: none;">
+    <div class="modal-content" style="max-width: 760px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <h3 style="font-weight: 700; margin: 0;">Turnos del Horario</h3>
+            <button type="button" class="btn" style="background: #f1f5f9; padding: 6px 14px;" onclick="closeModal('modalTurnos')">
+                <i class="fas fa-times"></i> Cerrar
+            </button>
+        </div>
+        <div id="modalTurnosBody" style="font-size: .92rem;"></div>
+    </div>
+</div>
+
 <style>
 .tab-btn {
     padding: 12px 20px; background: none; border: none; border-bottom: 3px solid transparent;
     font-weight: 600; color: var(--text-muted); cursor: pointer; transition: all 0.2s;
 }
 .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+.modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 1000;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+    overflow-y: auto;
+}
+.modal-content {
+    background: #fff; border-radius: 16px; padding: 28px; max-height: 90vh; overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0,0,0,.35);
+}
+.tabla-turnos { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.tabla-turnos th, .tabla-turnos td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; text-align: left; }
+.tabla-turnos th { background: #f8fafc; font-weight: 700; color: #334155; }
+.tabla-turnos tr:last-child td { border-bottom: none; }
+.badge-descanso { background: #fef3c7; color: #92400e; padding: 3px 10px; border-radius: 6px; font-size: .8rem; font-weight: 600; }
 </style>
 
 <script>
+// Datos de turnos inyectados desde PHP (NO fetch)
+window.turnosPorHorario = <?= json_encode($turnosPorHorario) ?>;
+window.nombresDias = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+
 function cambiarTab(tabId, btn) {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
@@ -240,17 +289,42 @@ function openAsignarModal(usuarioId, nombre) {
     openModal('modalAsignar');
 }
 
+// === FUNCIÓN CORREGIDA: lee de la variable JS, sin fetch ===
 function verDetalleHorario(id) {
-    fetch('/horion-time/public/horarios/detalle/' + id)
-        .then(r => r.json())
-        .then(data => {
-            let html = '<h3>Turnos del Horario</h3>';
-            data.turnos.forEach(t => {
-                html += `<p><strong>${data.dias[t.dia_semana]}:</strong> ${t.hora_entrada} - ${t.hora_salida}</p>`;
-            });
-            document.getElementById('modalTurnosBody').innerHTML = '<h3>Turnos del Horario</h3>' + loQueSigua;
-            document.getElementById('modalTurnos').style.display = 'block';
+    const turnos = window.turnosPorHorario[id] || [];
+    let html = '';
+
+    if (turnos.length === 0) {
+        html = '<div style="text-align:center; padding: 30px; color: var(--text-muted);">' +
+               '<i class="fas fa-calendar-times" style="font-size: 2rem; margin-bottom: 10px;"></i>' +
+               '<p>Este horario aún no tiene turnos configurados.</p>' +
+               '</div>';
+    } else {
+        html = '<table class="tabla-turnos">';
+        html += '<thead><tr><th>Día</th><th>Entrada</th><th>Salida</th><th>Estado</th></tr></thead><tbody>';
+        turnos.forEach(t => {
+            const dia = window.nombresDias[parseInt(t.dia_semana)] || ('Día ' + t.dia_semana);
+            const estado = parseInt(t.es_descanso) === 1
+                ? '<span class="badge-descanso">Descanso</span>'
+                : '<span class="badge badge-success">Laboral</span>';
+            html += `<tr>
+                        <td><strong>${dia}</strong></td>
+                        <td>${t.hora_entrada || '—'}</td>
+                        <td>${t.hora_salida || '—'}</td>
+                        <td>${estado}</td>
+                     </tr>`;
         });
+        html += '</tbody></table>';
+    }
+
+    document.getElementById('modalTurnosBody').innerHTML = html;
+    document.getElementById('modalTurnos').style.display = 'flex';
+}
+
+// Fallback si no existe openModal/closeModal en el sistema
+if (typeof openModal !== 'function') {
+    window.openModal = function(id) { document.getElementById(id).style.display = 'flex'; };
+    window.closeModal = function(id) { document.getElementById(id).style.display = 'none'; };
 }
 </script>
 
