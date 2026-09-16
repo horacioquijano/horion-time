@@ -14,9 +14,21 @@ class Database {
     private $charset = 'utf8mb4';
     
     private function __construct() {
+        // === RAILWAY: leer variables de entorno si existen ===
+        if (getenv('MYSQL_HOST'))     $this->host     = getenv('MYSQL_HOST');
+        if (getenv('MYSQL_PORT'))     $this->port     = getenv('MYSQL_PORT');
+        if (getenv('MYSQL_DATABASE')) $this->dbname   = getenv('MYSQL_DATABASE');
+        if (getenv('MYSQL_USER'))     $this->username = getenv('MYSQL_USER');
+        if (getenv('MYSQL_PASSWORD')) $this->password = getenv('MYSQL_PASSWORD');
+        // =====================================================
+
         try {
+            $dsn = "mysql:host={$this->host}";
+            if (!empty($this->port)) $dsn .= ";port={$this->port}";
+            $dsn .= ";dbname={$this->dbname};charset={$this->charset}";
+
             $this->connection = new PDO(
-                "mysql:host={$this->host};dbname={$this->dbname};charset={$this->charset}",
+                $dsn,
                 $this->username,
                 $this->password,
                 [
