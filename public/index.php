@@ -1,5 +1,4 @@
 <?php
-require_once __DIR__ . '/../app/config.php';
 date_default_timezone_set('America/Bogota');
 if (session_status() === PHP_SESSION_NONE) session_start();
 error_reporting(E_ALL & ~E_NOTICE & ~E_DEPRECATED);
@@ -19,10 +18,7 @@ foreach (['Security', 'Audit'] as $h) {
 }
 
 try {
-    $db = new PDO('HORION_DSN, HORION_DB_USER, HORION_DB_PASS, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    ]);
+    $db = \App\Config\Database::getInstance()->getConnection();
 } catch (PDOException $e) {
     die("❌ Error de conexión a la BD: " . $e->getMessage());
 }
@@ -73,7 +69,7 @@ if ($path === 'login') {
             $_SESSION['rol']             = $u['rol'] ?? 'Empleado';
             $_SESSION['empresa_id']      = $u['empresa_id'] !== null ? (int)$u['empresa_id'] : 1;
             if ($_SESSION['rol_nombre'] === 'SuperAdmin') {
-                $_SESSION['modo_global'] = true;   // arranca en "Todas las empresas"
+                $_SESSION['modo_global'] = true;
                 $_SESSION['empresa_nombre'] = 'TODAS LAS EMPRESAS';
                 $_SESSION['todas_empresas'] = true;
                 $_SESSION['es_plataforma']  = ((int)$_SESSION['empresa_id'] === 1);
@@ -158,7 +154,6 @@ if ($path === 'cambiarEmpresa') {
             }
         }
     }
-    // Volver al módulo actual (referer), NO al dashboard
     $volver = $_SERVER['HTTP_REFERER'] ?? '';
     if ($volver === '' || strpos($volver, $BASE) !== 0) $volver = $BASE . '/';
     header('Location: ' . $volver);
