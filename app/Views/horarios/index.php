@@ -309,7 +309,7 @@ function verDetalleHorario(id) {
     }
 
     document.getElementById('modalTurnosBody').innerHTML = html;
-    document.getElementById('modalTurnos').style.display = 'flex';
+    openModal('modalTurnos');
 }
 
 // Fallback si no existe openModal/closeModal en el sistema
