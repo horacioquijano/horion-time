@@ -6,14 +6,14 @@
 // =====================================================================
 try {
     if (empty($sedesPorEmpresa)) {
-        $__pdo = new PDO('HORION_DSN, HORION_DB_USER, HORION_DB_PASS, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $__pdo = \App\Config\Database::getInstance()->getConnection();
         $sedesPorEmpresa = [];
         foreach ($__pdo->query("SELECT id, nombre, empresa_id FROM sedes ORDER BY empresa_id, nombre")->fetchAll(PDO::FETCH_ASSOC) as $__s) {
             $sedesPorEmpresa[(int)$__s['empresa_id']][] = $__s;
         }
     }
     if (empty($jefesPorEmpresa)) {
-        $__pdo = $__pdo ?? new PDO('HORION_DSN, HORION_DB_USER, HORION_DB_PASS, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $__pdo = $__pdo ?? \App\Config\Database::getInstance()->getConnection();
         $jefesPorEmpresa = [];
         foreach ($__pdo->query("SELECT id, nombre_completo, cargo, empresa_id FROM usuarios WHERE es_jefe = 1 AND estado = 'activo' ORDER BY nombre_completo")->fetchAll(PDO::FETCH_ASSOC) as $__j) {
             $jefesPorEmpresa[(int)$__j['empresa_id']][] = $__j;
