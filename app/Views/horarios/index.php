@@ -229,7 +229,7 @@ try {
 </div>
 
 <!-- Modal Ver Turnos (NUEVO) -->
-<div class="modal-overlay" id="modalTurnos" style="display: none;">
+<div class="modal-overlay" id="modalTurnos">
     <div class="modal-content" style="max-width: 760px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
             <h3 style="font-weight: 700; margin: 0;">Turnos del Horario</h3>
