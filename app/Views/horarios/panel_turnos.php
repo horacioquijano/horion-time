@@ -155,10 +155,17 @@ foreach (($panel ?? []) as $row) { $kpiDias += count($row['dias']); $kpiHoras +=
     <?php elseif ($tab === 'carga'): ?>
     <!-- ================= CARGA MASIVA ================= -->
     <div class="card-3d" style="padding:22px;">
-        <h3 style="margin:0 0 6px 0;font-weight:700;"><i class="fas fa-file-excel" style="color:var(--primary);"></i> Subir horario mensual</h3>
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:6px;">
+            <h3 style="margin:0;font-weight:700;"><i class="fas fa-file-excel" style="color:var(--primary);"></i> Subir horario mensual</h3>
+            <a class="btn" style="background:rgba(3,169,80,.12);color:var(--primary);text-decoration:none;font-weight:700;"
+               href="<?= $b ?>/horarios/descargarPlantilla?mes=<?= $mes ?>&anio=<?= $anio ?>">
+                <i class="fas fa-download"></i> Descargar plantilla (.xlsx)
+            </a>
+        </div>
         <p style="color:var(--text-muted);font-size:.88rem;margin:0 0 18px 0;">
-            Sube tu <code>.xlsx</code> tal como lo llenas hoy. El sistema detecta el encabezado (<b>IDENTIFICACION</b>, días 1-31),
-            fusiona empleados repetidos (URGENCIAS + MOVIL), convierte <b>VACACIONES</b> en <b>V</b> y marca textos libres como observaciones.
+            Sube tu <code>.xlsx</code> tal como lo llenas hoy (o usa la plantilla descargable). El sistema detecta el encabezado
+            (<b>IDENTIFICACION</b>, días 1-31), fusiona empleados repetidos (URGENCIAS + MOVIL), convierte <b>VACACIONES</b> en <b>V</b>
+            y marca textos libres como observaciones.
         </p>
         <form method="POST" action="<?= $b ?>/horarios/procesarCarga" enctype="multipart/form-data"
               style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;align-items:end;">
