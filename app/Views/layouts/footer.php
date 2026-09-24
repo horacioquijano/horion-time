@@ -61,15 +61,13 @@
         var isOpen = sidebar.classList.toggle('sidebar-open');
         if (overlay) overlay.classList.toggle('active', isOpen);
         document.body.style.overflow = isOpen ? 'hidden' : '';
-        if (isOpen) sidebar.classList.remove('collapsed'); // garantiza iconos + texto visibles
+        if (isOpen) sidebar.classList.remove('collapsed');
         return isOpen;
     }
     window.toggleSidebar = toggleSidebar;
 
     document.addEventListener('DOMContentLoaded', function () {
         var sb = document.getElementById('sidebar');
-
-        // Inyecta botón ✕ si no existe en el sidebar
         if (sb && !sb.querySelector('.sidebar-close-mobile')) {
             var x = document.createElement('button');
             x.type = 'button';
@@ -79,8 +77,6 @@
             x.addEventListener('click', toggleSidebar);
             sb.insertBefore(x, sb.firstChild);
         }
-
-        // Inyecta overlay oscuro si no existe
         if (!document.getElementById('sidebarOverlay')) {
             var ov = document.createElement('div');
             ov.id = 'sidebarOverlay';
@@ -90,7 +86,6 @@
         }
     });
 
-    // Botón ☰ del header: en móvil abre/cierra el drawer (en desktop NO toca el comportamiento original)
     document.addEventListener('click', function (e) {
         var btn = e.target.closest ? e.target.closest('#toggleSidebar') : null;
         if (!btn || window.innerWidth > 992) return;
@@ -99,7 +94,6 @@
         toggleSidebar();
     }, true);
 
-    // Cierra al navegar por un enlace del menú (solo móvil)
     document.addEventListener('click', function (e) {
         if (window.innerWidth > 992) return;
         var sb = document.getElementById('sidebar');
@@ -107,14 +101,12 @@
         if (e.target.closest('.sidebar a')) toggleSidebar();
     });
 
-    // Cierra con tecla Escape
     document.addEventListener('keydown', function (e) {
         if (e.key !== 'Escape') return;
         var sb = document.getElementById('sidebar');
         if (sb && sb.classList.contains('sidebar-open')) toggleSidebar();
     });
 
-    // Si vuelve a tamaño desktop, limpia estados
     window.addEventListener('resize', function () {
         if (window.innerWidth > 992) {
             var sb = document.getElementById('sidebar');
