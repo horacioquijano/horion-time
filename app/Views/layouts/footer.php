@@ -11,22 +11,42 @@
      SIDEBAR MÓVIL (drawer) — CSS + JS autocontenido
      ===================================================== -->
 <style>
-.sidebar-close-mobile{display:none;position:absolute;top:14px;right:14px;background:transparent;border:none;font-size:1.25rem;color:var(--text-dark,#333);cursor:pointer;padding:6px 10px;border-radius:8px;z-index:10}
+/* ===== SIDEBAR MÓVIL (drawer) — override total ===== */
+.sidebar-close-mobile{display:none;position:absolute;top:14px;right:14px;background:transparent;border:none;font-size:1.25rem;color:#333;cursor:pointer;padding:6px 10px;border-radius:8px;z-index:10}
 .sidebar-close-mobile:hover{background:rgba(0,0,0,.08)}
-.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:998}
+.sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9998}
 .sidebar-overlay.active{display:block}
 @media (max-width:992px){
-  .sidebar{position:fixed!important;top:0;left:0;height:100vh;transform:translateX(-100%);transition:transform .3s ease;z-index:999!important;box-shadow:4px 0 20px rgba(0,0,0,.2);overflow-y:auto}
-  .sidebar.sidebar-open{transform:translateX(0)}
+  .sidebar{
+    display:block!important;
+    visibility:visible!important;
+    opacity:1!important;
+    position:fixed!important;
+    top:0!important;
+    left:0!important;
+    bottom:0!important;
+    height:100%!important;
+    width:280px!important;
+    max-width:85vw!important;
+    margin:0!important;
+    transform:translateX(-105%)!important;
+    transition:transform .3s ease!important;
+    z-index:9999!important;
+    overflow-y:auto!important;
+    box-shadow:4px 0 20px rgba(0,0,0,.25);
+  }
+  .sidebar.sidebar-open{transform:translateX(0)!important}
+  .sidebar .nav-item{display:flex!important;align-items:center!important}
+  .sidebar .nav-item i{display:inline-block!important;width:24px!important;text-align:center!important;margin-right:12px!important}
+  .sidebar .nav-item span{display:inline!important}
   .sidebar-close-mobile{display:block}
-  .sidebar.sidebar-open .nav-item span{display:inline!important}
   .main-content{margin-left:0!important;width:100%!important}
   #toggleSidebar{display:inline-flex!important;align-items:center;justify-content:center}
   .search-box kbd{display:none}
   .user-info{display:none}
 }
 @media (max-width:576px){
-  .sidebar{width:85vw!important;max-width:320px}
+  .sidebar{width:85vw!important}
   .search-box{display:none!important}
   .top-header select{max-width:150px!important;font-size:.78rem!important}
 }
