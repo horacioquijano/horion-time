@@ -26,9 +26,14 @@ try {
         <i class="fas fa-clock" style="color: var(--primary);"></i>
         Gestión de Horarios y Turnos
     </h2>
-    <button class="btn btn-primary" onclick="openModal('modalCrearHorario')">
-        <i class="fas fa-plus"></i> Crear Horario
-    </button>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <a href="/horion-time/public/horarios/panelTurnos" class="btn" style="background:rgba(3,169,80,.10);color:var(--primary);font-weight:700;text-decoration:none;">
+            <i class="fas fa-calendar-week"></i> Panel de Turnos
+        </a>
+        <button class="btn btn-primary" onclick="openModal('modalCrearHorario')">
+            <i class="fas fa-plus"></i> Crear Horario
+        </button>
+    </div>
 </div>
 
 <div style="padding: 32px;">
@@ -228,7 +233,7 @@ try {
     </div>
 </div>
 
-<!-- Modal Ver Turnos (NUEVO) -->
+<!-- Modal Ver Turnos -->
 <div class="modal-overlay" id="modalTurnos">
     <div class="modal-content" style="max-width: 760px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
@@ -280,7 +285,6 @@ function openAsignarModal(usuarioId, nombre) {
     openModal('modalAsignar');
 }
 
-// === FUNCIÓN CORREGIDA: lee de la variable JS, sin fetch ===
 function verDetalleHorario(id) {
     const turnos = window.turnosPorHorario[id] || [];
     let html = '';
