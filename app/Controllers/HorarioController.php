@@ -108,7 +108,7 @@ class HorarioController {
     }
 
     // ==========================================================
-    //  PANEL DE TURNOS Y CARGA MASIVA (NUEVO)
+    //  PANEL DE TURNOS Y CARGA MASIVA
     // ==========================================================
 
     /** Pantalla principal: Panel Mensual / Carga / Historial / Leyenda */
@@ -306,6 +306,70 @@ class HorarioController {
         $m = new \App\Models\CargaMasivaModel($this->db);
         $m->revertirLote((int)($id ?? 0));
         header('Location: /horion-time/public/horarios/panelTurnos?tab=historial&msg=' . urlencode('Lote revertido'));
+        exit;
+    }
+
+    /** GENERA Y DESCARGA LA PLANTILLA .xlsx DEL MES (NUEVO) */
+    public function descargarPlantilla() {
+        require_once __DIR__ . '/../Libs/MiniXLSXWriter.php';
+        require_once __DIR__ . '/../Models/CargaMasivaModel.php';
+
+        $m  = new \App\Models\CargaMasivaModel($this->db);
+        $mes  = (int)($_GET['mes']  ?? date('n'));
+        $anio = (int)($_GET['anio'] ?? date('Y'));
+        $diasMes = (int)date('t', mktime(0, 0, $mes, 1, $anio));
+        $mesesEs = [1=>'Enero',2=>'Febrero',3=>'Marzo',4=>'Abril',5=>'Mayo',6=>'Junio',
+                    7=>'Julio',8=>'Agosto',9=>'Septiembre',10=>'Octubre',11=>'Noviembre',12=>'Diciembre'];
+
+        $parametros = $m->getParametros($this->empresaActual());
+
+        $hoja = [];
+        $hoja[] = ['HORARIO DE TURNOS — ' . strtoupper($mesesEs[$mes]) . ' ' . $anio];
+        $hoja[] = [];
+
+        $head = ['IDENTIFICACION', 'NOMBRES Y APELLIDOS', 'CARGO', 'SERVICIO A LABORAR'];
+        for ($d = 1; $d <= $diasMes; $d++) $head[] = $d;
+        $hoja[] = $head;
+
+        // Filas de ejemplo
+        $ej1 = ['123456789', 'PEREZ EJEMPLO JUAN', 'AUXILIAR CLINICO', 'URGENCIAS'];
+        $ej2 = ['987654321', 'RODRIGUEZ EJEMPLO ANA', 'AUXILIAR CLINICO', 'LAVANDERIA'];
+        for ($d = 1; $d <= $diasMes; $d++) {
+            $ej1[] = ($d % 7 === 0) ? 'L' : ($d % 7 === 1 ? 'N' : 'C');
+            $ej2[] = ($d % 7 === 0) ? 'L' : 'C';
+        }
+        $hoja[] = $ej1;
+        $hoja[] = $ej2;
+        $hoja[] = [];
+
+        $hoja[] = ['LEYENDA (se edita en el sistema: Panel de Turnos → pestaña Leyenda)'];
+        foreach ($parametros as $p) {
+            $hoja[] = [
+                $p['codigo'],
+                $p['nombre'],
+                trim(($p['hora_entrada'] ?? '') . ' a ' . ($p['hora_salida'] ?? ''), ' a'),
+                $p['horas_trabajadas'] . ' horas',
+            ];
+        }
+        $hoja[] = [];
+
+        $hoja[] = ['INSTRUCCIONES DE DILIGENCIAMIENTO'];
+        $hoja[] = ['1. No modifique la fila de encabezados (IDENTIFICACION ... y los números de día).'];
+        $hoja[] = ['2. Una fila por empleado. Si un empleado tiene dos servicios, use dos filas con la MISMA cédula: el sistema las fusiona.'];
+        $hoja[] = ['3. En las celdas de día escriba únicamente la letra de la leyenda (C, N, L, M, V) o la palabra VACACIONES.'];
+        $hoja[] = ['4. Deje vacía la celda de los días sin turno. No escriba totales ni horas: el sistema los calcula solo.'];
+        $hoja[] = ['5. Empleados nuevos: si la cédula no existe en el sistema, podrá crearlos automáticamente al confirmar la carga.'];
+        $hoja[] = ['6. Borre las dos filas de ejemplo antes de subir el archivo.'];
+
+        $tmp = tempnam(sys_get_temp_dir(), 'plantilla_') . '.xlsx';
+        \App\Libs\MiniXLSXWriter::crear(['Horario' => $hoja], $tmp, ['Horario' => [0, 2]]);
+
+        $nombre = 'Plantilla_Turnos_' . $mesesEs[$mes] . '_' . $anio . '.xlsx';
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment; filename="' . $nombre . '"');
+        header('Content-Length: ' . filesize($tmp));
+        readfile($tmp);
+        @unlink($tmp);
         exit;
     }
 }
