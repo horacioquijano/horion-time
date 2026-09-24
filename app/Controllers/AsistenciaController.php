@@ -54,6 +54,16 @@ $foto = '/horion-time/public/uploads/marcaciones/' . $nombre;
 $_POST['fecha'] = $_POST['fecha'] ?? date('Y-m-d');
 $_POST['hora_registro'] = $_POST['hora_registro'] ?? date('H:i:s');
 // ===== FIN FIX =====
+
+// ===== FIX ERROR 1366: GPS vacío => NULL en columnas DECIMAL =====
+foreach (['lat', 'lng', 'accuracy', 'precision'] as $__gps) {
+    if (array_key_exists($__gps, $_POST)) {
+        $__val = trim((string)$_POST[$__gps]);
+        $_POST[$__gps] = ($__val === '') ? null : $__val;
+    }
+}
+// ==================================================================
+
 $this->model->registrarMarcacion([
 'empresa_id'       => $_SESSION['empresa_id'] ?? 1,
 'usuario_id'       => $_SESSION['usuario_id'] ?? 1,
