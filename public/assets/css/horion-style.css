@@ -84,3 +84,132 @@ body.theme-dark .top-header{background:rgba(30,41,59,.85)}
 /* === COMPAT: vistas de módulos que abren su propio <main> y .top-header dentro del content-wrapper === */
 .content-wrapper main.main-content{display:block;flex:none;overflow:visible;min-width:0}
 .content-wrapper .top-header{position:static;backdrop-filter:none;-webkit-backdrop-filter:none;background:transparent;border-bottom:none;padding:0 0 16px;box-shadow:none}
+/* ========================================
+   SIDEBAR RESPONSIVE (Tablet + Celular)
+   ======================================== */
+
+/* Botón cerrar X (solo en móvil) */
+.sidebar-close-mobile {
+    display: none;
+    position: absolute;
+    top: 18px;
+    right: 18px;
+    background: transparent;
+    border: none;
+    font-size: 1.3rem;
+    color: var(--text-dark);
+    cursor: pointer;
+    padding: 6px 10px;
+    border-radius: 8px;
+    z-index: 10;
+    transition: background 0.2s;
+}
+.sidebar-close-mobile:hover { background: rgba(0,0,0,.08); }
+
+/* Overlay oscuro detrás del sidebar */
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.5);
+    z-index: 998;
+    backdrop-filter: blur(2px);
+}
+.sidebar-overlay.active { display: block; animation: fadeIn 0.25s ease; }
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* ===== TABLET Y CELULAR (≤992px) ===== */
+@media (max-width: 992px) {
+    /* Sidebar se oculta fuera de la pantalla */
+    .sidebar {
+        transform: translateX(-100%);
+        z-index: 999;
+        box-shadow: 4px 0 20px rgba(0,0,0,.15);
+    }
+    
+    /* Cuando está abierto, se desliza hacia adentro */
+    .sidebar.sidebar-open {
+        transform: translateX(0);
+    }
+    
+    /* Mostrar botón X de cerrar */
+    .sidebar-close-mobile { display: block; }
+    
+    /* El contenido principal ocupa todo el ancho */
+    .main-content {
+        margin-left: 0 !important;
+        width: 100% !important;
+    }
+    
+    /* Header también ocupa todo */
+    .top-header {
+        padding: 12px 16px !important;
+    }
+    
+    /* Hacer el botón hamburguesa más visible */
+    #toggleSidebar {
+        display: inline-flex !important;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
+        font-size: 1.2rem;
+    }
+    
+    /* Ocultar cosas que estorban en móvil */
+    .search-box kbd { display: none; }
+    .user-info { display: none; }
+    .user-profile img { width: 36px; height: 36px; }
+}
+
+/* ===== CELULARES (≤576px) ===== */
+@media (max-width: 576px) {
+    .sidebar {
+        width: 85vw !important;
+        max-width: 320px;
+    }
+    
+    .sidebar .nav-item {
+        padding: 12px 16px !important;
+        font-size: 0.95rem;
+    }
+    
+    .sidebar .nav-item i {
+        font-size: 1.1rem;
+        margin-right: 12px;
+        width: 22px;
+    }
+    
+    .top-header {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    
+    .header-right {
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+    
+    .search-box {
+        display: none !important;
+    }
+    
+    .breadcrumb .current-page {
+        font-size: 0.9rem;
+    }
+    
+    /* El select de empresa se hace más compacto */
+    .top-header select {
+        max-width: 160px !important;
+        font-size: 0.8rem !important;
+        padding: 6px 8px !important;
+    }
+}
+
+/* ===== CELULARES MUY PEQUEÑOS (≤400px) ===== */
+@media (max-width: 400px) {
+    .sidebar { width: 90vw !important; }
+    .notification-wrapper { display: none; }
+    .breadcrumb .separator { display: none; }
+}
