@@ -57,6 +57,9 @@ $sedes_json = json_encode(array_map(function($s) {
 
 $mesesEs = [1=>'enero',2=>'febrero',3=>'marzo',4=>'abril',5=>'mayo',6=>'junio',7=>'julio',8=>'agosto',9=>'septiembre',10=>'octubre',11=>'noviembre',12=>'diciembre'];
 $diasEs  = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+
+// FASE C: detectar iOS/Safari
+$es_ios = isset($_SERVER['HTTP_USER_AGENT']) && preg_match('/iPad|iPhone|iPod/', $_SERVER['HTTP_USER_AGENT']);
 ?>
 
 <!-- face-api.js desde CDN -->
@@ -115,7 +118,7 @@ $diasEs  = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'
                 <img id="previewImg" style="width:100%;border-radius:14px;border:3px solid var(--primary);" />
             </div>
             <div style="display:flex;gap:10px;margin-top:12px;">
-                <button type="button" class="btn" style="flex:1;background:var(--bg-body);" onclick="iniciarCamara()"><i class="fas fa-video"></i> Reiniciar cámara</button>
+                <button type="button" class="btn" style="flex:1;background:var(--bg-body);" onclick="reiniciar()"><i class="fas fa-video"></i> Reiniciar cámara</button>
                 <button type="button" class="btn" style="flex:1;background:var(--bg-body);" onclick="capturarFoto(false)" id="btnCapturar" disabled><i class="fas fa-camera-retro"></i> Captura manual</button>
             </div>
         </div>
@@ -123,7 +126,7 @@ $diasEs  = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'
         <!-- Panel mínimo -->
         <div class="card-3d kiosk-panel">
             <h3 style="margin:0 0 4px 0;font-weight:800;">Hola, <?= htmlspecialchars(explode(' ', $_SESSION['nombre_completo'] ?? 'colaborador')[0]) ?> 👋</h3>
-            <p style="color:var(--text-muted);font-size:.85rem;margin:0 0 18px 0;">
+            <p id="panelHint" style="color:var(--text-muted);font-size:.85rem;margin:0 0 14px 0;">
                 <?php if ($tiene_rostro): ?>
                     Ubícate frente a la cámara. Tu rostro se verifica automáticamente.
                 <?php else: ?>
@@ -131,10 +134,23 @@ $diasEs  = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'
                 <?php endif; ?>
             </p>
 
+            <!-- FASE C: Banner modo compatibilidad (oculto por defecto) -->
+            <div id="compatBanner" style="display:none;background:#fef3c7;border:1px solid #fde68a;color:#92400e;border-radius:10px;padding:10px 12px;font-size:.8rem;margin-bottom:14px;">
+                <i class="fas fa-info-circle"></i> <b>Modo compatibilidad activo</b> (iOS/Safari o sin IA).
+                Usa el botón <b>Captura manual</b>: tu marcación quedará <b>pendiente de verificación manual</b> con tu foto como evidencia.
+                <?php if (!$tiene_rostro): ?>Cuando abras el sistema en Chrome/Edge se enrolará tu rostro automáticamente para futuras verificaciones.<?php endif; ?>
+            </div>
+            <?php if ($es_ios): ?>
+            <div style="background:var(--bg-body,#f1f5f9);border-radius:10px;padding:8px 12px;font-size:.75rem;color:var(--text-muted);margin-bottom:14px;">
+                <i class="fab fa-apple"></i> Detectado dispositivo Apple: si la IA no inicia en pocos segundos, el modo compatibilidad se activa solo.
+            </div>
+            <?php endif; ?>
+
             <form action="/horion-time/public/asistencia/procesar" method="POST" id="formMarcacion">
                 <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrf_token) ?>">
                 <input type="hidden" name="foto_data" id="fotoData">
                 <input type="hidden" name="face_descriptor" id="faceDescriptorInput">
+                <input type="hidden" name="modo_face" id="modoFaceInput" value="ia">
                 <input type="hidden" name="lat" id="latInput">
                 <input type="hidden" name="lng" id="lngInput">
                 <input type="hidden" name="distancia_m" id="distanciaInput">
@@ -236,7 +252,7 @@ $diasEs  = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'
 const TIENE_ROSTRO = <?= $tiene_rostro ? 'true' : 'false' ?>;
 const SEDES = <?= $sedes_json ?>;
 let stream = null, fotoCapturada = false, faceDescriptorActual = null;
-let modelosCargados = false, deteccionActiva = false;
+let modelosCargados = false, deteccionActiva = false, modoCompat = false;
 
 // =====================================================================
 // RELOJ
@@ -246,24 +262,50 @@ function actualizarReloj(){
 }
 setInterval(actualizarReloj,1000); actualizarReloj();
 
+function setStatus(txt, tipo){
+    const el = document.getElementById('faceStatus');
+    el.textContent = txt;
+    el.style.background = tipo==='ok' ? 'rgba(22,101,52,.92)' : (tipo==='warn' ? 'rgba(146,64,14,.92)' : 'rgba(0,0,0,.72)');
+}
+
 // =====================================================================
-// FACE-API.JS: cargar modelos
+// FASE C: MODO COMPATIBILIDAD
+// =====================================================================
+function activarCompat(motivo){
+    if (modoCompat) return;
+    modoCompat = true;
+    deteccionActiva = false;
+    document.getElementById('modoFaceInput').value = 'compat';
+    document.getElementById('compatBanner').style.display = 'block';
+    document.getElementById('btnCapturar').disabled = false;
+    setStatus('📷 Modo compatibilidad: usa Captura manual', 'warn');
+    const hint = document.getElementById('panelHint');
+    if (hint) hint.innerHTML = '<b>Modo compatibilidad (' + motivo + '):</b> captura tu foto con el botón y registra. RRHH validará con tu evidencia.';
+}
+
+// =====================================================================
+// FACE-API.JS: cargar modelos CON TIMEOUT
 // =====================================================================
 async function cargarModelos() {
     setStatus('Cargando modelos IA…','');
+    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout de carga')), 15000));
     try {
+        if (typeof faceapi === 'undefined') throw new Error('librería no disponible');
         const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model/';
-        await Promise.all([
-            faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-            faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-            faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+        await Promise.race([
+            Promise.all([
+                faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+                faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+                faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+            ]),
+            timeout
         ]);
         modelosCargados = true;
         setStatus('✓ Modelos cargados — iniciando cámara…','ok');
         iniciarCamara();
     } catch(e) {
-        setStatus('❌ Error cargando IA: ' + e.message,'warn');
-        document.getElementById('btnCapturar').disabled = false;
+        activarCompat('sin IA: ' + (e.message || 'error'));
+        iniciarCamara();
     }
 }
 
@@ -271,8 +313,7 @@ async function cargarModelos() {
 // CÁMARA
 // =====================================================================
 async function iniciarCamara(){
-    if (!modelosCargados) { cargarModelos(); return; }
-    setStatus('Solicitando cámara…','warn');
+    setStatus(modoCompat ? '📷 Cámara lista (modo compatibilidad)' : 'Solicitando cámara…', modoCompat ? 'warn' : '');
     if (stream) stream.getTracks().forEach(t=>t.stop());
     try{
         stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:1280}},audio:false});
@@ -280,16 +321,27 @@ async function iniciarCamara(){
         v.srcObject = stream;
         document.getElementById('btnCapturar').disabled = false;
         await new Promise(r => v.readyState>=2 ? r() : (v.onloadeddata=r));
-        setStatus(TIENE_ROSTRO ? '✓ Verificando rostro…' : '✓ Capturando rostro para enrolar…','ok');
-        iniciarDeteccion();
-    }catch(e){ setStatus('❌ Sin cámara: ' + e.message,'warn'); }
+        if (!modoCompat) {
+            setStatus(TIENE_ROSTRO ? '✓ Verificando rostro…' : '✓ Capturando rostro para enrolar…','ok');
+            iniciarDeteccion();
+        }
+    }catch(e){ setStatus('❌ Sin cámara: ' + e.message,'warn'); activarCompat('sin acceso a cámara'); }
+}
+
+function reiniciar(){
+    fotoCapturada = false;
+    document.getElementById('fotoPreview').style.display = 'none';
+    document.getElementById('fotoData').value = '';
+    document.getElementById('faceDescriptorInput').value = '';
+    document.querySelector('.kiosk-submit').classList.remove('pulse');
+    if (modoCompat) { iniciarCamara(); } else { cargarModelos(); }
 }
 
 // =====================================================================
 // DETECCIÓN Y RECONOCIMIENTO FACIAL
 // =====================================================================
 async function iniciarDeteccion() {
-    if (deteccionActiva) return;
+    if (deteccionActiva || modoCompat) return;
     deteccionActiva = true;
     const v = document.getElementById('video');
     const overlay = document.getElementById('overlay');
@@ -316,10 +368,8 @@ async function iniciarDeteccion() {
                     faceDescriptorActual = detection.descriptor;
                     
                     if (TIENE_ROSTRO) {
-                        // MODO VERIFICACIÓN: comparar con descriptor guardado
                         verificarRostro(detection.descriptor);
                     } else {
-                        // MODO INSCRIPCIÓN: capturar después de 2 segundos de estabilidad
                         setStatus('📸 Rostro detectado — mantén la posición…','warn');
                         setTimeout(() => {
                             if (!fotoCapturada && faceDescriptorActual) {
@@ -333,7 +383,9 @@ async function iniciarDeteccion() {
                     setStatus(TIENE_ROSTRO ? 'Ubique su rostro dentro del óvalo' : 'Mira a la cámara y sonríe 🙂','');
                 }
             }
-        } catch(e) {}
+        } catch(e) {
+            activarCompat('error de IA en dispositivo');
+        }
         
         if (deteccionActiva && !fotoCapturada) {
             setTimeout(loop, 500);
@@ -363,7 +415,7 @@ async function verificarRostro(descriptorActual) {
             setStatus('⚠️ El rostro no coincide (' + distancia.toFixed(2) + ')','warn');
         }
     } catch(e) {
-        setStatus('Error verificando: captura manual','warn');
+        activarCompat('sin conexión para verificar');
     }
 }
 
@@ -380,6 +432,7 @@ function capturarFoto(auto, descriptor = null){
     document.getElementById('fotoData').value = data;
     document.getElementById('previewImg').src = data;
     document.getElementById('fotoPreview').style.display = 'block';
+    document.getElementById('modoFaceInput').value = descriptor ? 'ia' : 'compat';
     
     if (descriptor) {
         document.getElementById('faceDescriptorInput').value = JSON.stringify(Array.from(descriptor));
@@ -461,7 +514,7 @@ function actualizarDistancia() {
 }
 
 function calcularHaversine(lat1, lon1, lat2, lon2) {
-    const R = 6371000; // metros
+    const R = 6371000;
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
     const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
@@ -495,12 +548,6 @@ function prepararMarcacion(){
     }
     
     return true;
-}
-
-function setStatus(txt, tipo){
-    const el = document.getElementById('faceStatus');
-    el.textContent = txt;
-    el.style.background = tipo==='ok' ? 'rgba(22,101,52,.92)' : (tipo==='warn' ? 'rgba(146,64,14,.92)' : 'rgba(0,0,0,.72)');
 }
 
 // =====================================================================
