@@ -167,4 +167,69 @@ class EmpresaController {
             header('Location: /horion-time/public/empresas?error=' . urlencode($e->getMessage())); exit;
         }
     }
+
+    // =====================================================
+    // MÉTODOS PARA GEOREFERENCIACIÓN (NUEVOS)
+    // =====================================================
+
+    /** Mostrar modal de georeferenciación */
+    public function georeferenciar($id = null) {
+        header('Content-Type: application/json');
+        try {
+            $id = (int)($id ?? 0);
+            $st = $this->db->prepare("SELECT id, nombre, lat_ref, lng_ref, radio_m FROM sedes WHERE id = ? LIMIT 1");
+            $st->execute([$id]);
+            $sede = $st->fetch(PDO::FETCH_ASSOC);
+            
+            if (!$sede) {
+                echo json_encode(['error' => 'Sucursal no encontrada']);
+                exit;
+            }
+            
+            echo json_encode($sede);
+        } catch (\Throwable $e) {
+            echo json_encode(['error' => $e->getMessage()]);
+        }
+        exit;
+    }
+
+    /** Guardar coordenadas de georeferenciación */
+    public function guardarGeoreferencia() {
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            header('Location: /horion-time/public/empresas');
+            exit;
+        }
+        
+        try {
+            $sede_id = (int)($_POST['sede_id'] ?? 0);
+            $lat_ref = $_POST['lat_ref'] ?? null;
+            $lng_ref = $_POST['lng_ref'] ?? null;
+            $radio_m = (int)($_POST['radio_m'] ?? 150);
+            
+            if (!$sede_id || !$lat_ref || !$lng_ref) {
+                throw new \Exception('Datos incompletos');
+            }
+            
+            // Validar permisos
+            $q = $this->db->prepare("SELECT empresa_id FROM sedes WHERE id = ?");
+            $q->execute([$sede_id]);
+            $emp = (int)$q->fetchColumn();
+            $origen = $this->empresaOrigen();
+            $mi     = $this->empresaActiva();
+            if ($origen !== 1 && $emp !== $mi && $emp !== $origen) {
+                throw new \Exception('Sin permiso sobre esta sucursal');
+            }
+            
+            // Actualizar coordenadas
+            $st = $this->db->prepare("UPDATE sedes SET lat_ref = ?, lng_ref = ?, radio_m = ? WHERE id = ?");
+            $st->execute([$lat_ref, $lng_ref, $radio_m, $sede_id]);
+            
+            header('Location: /horion-time/public/empresas?success=1&msg=' . urlencode('Georeferencia guardada'));
+            exit;
+            
+        } catch (\Exception $e) {
+            header('Location: /horion-time/public/empresas?error=' . urlencode($e->getMessage()));
+            exit;
+        }
+    }
 }
