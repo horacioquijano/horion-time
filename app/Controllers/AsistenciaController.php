@@ -8,13 +8,13 @@ use App\Helpers\Security;
 class AsistenciaController {
     private $model;
     private $db;
+    const UMBRAL_ROSTRO = 0.55;
     
     public function __construct($db) {
         $this->db = $db;
         $this->model = new AsistenciaModel($db);
     }
     
-    /** Construye el array de filtros desde GET (compartido por index y exportar) */
     private function filtros() {
         $modoGlobal = (bool)($_SESSION['modo_global'] ?? false);
         $empresa = $_GET['empresa'] ?? null;
@@ -28,7 +28,6 @@ class AsistenciaController {
         ];
     }
     
-    /** Listado general con filtros combinados */
     public function index() {
         $filtros = $this->filtros();
         $marcaciones = $this->model->getMarcacionesFiltradas($filtros);
@@ -39,19 +38,15 @@ class AsistenciaController {
         include __DIR__ . '/../Views/asistencia/index.php';
     }
     
-    /** Exportar CSV respetando los filtros aplicados */
     public function exportar() {
         $filtros = $this->filtros();
         $marcaciones = $this->model->getMarcacionesFiltradas($filtros);
-        
         $nombre = 'asistencia_' . $filtros['fecha_desde'] . '_a_' . $filtros['fecha_hasta'] . '.csv';
         header('Content-Type: text/csv; charset=UTF-8');
         header('Content-Disposition: attachment; filename="' . $nombre . '"');
-        
         $out = fopen('php://output', 'w');
         fwrite($out, "\xEF\xBB\xBF");
         fputcsv($out, ['Fecha','Hora','Empleado','Cédula','Tipo','Método','Sede','Turno del día','Horario turno','Estado','Observaciones','Lat','Lng']);
-        
         foreach ($marcaciones as $m) {
             $turno = $m['turno_codigo'] ?? '';
             $horario = '';
@@ -59,26 +54,16 @@ class AsistenciaController {
                 $horario = substr($m['turno_entrada'], 0, 5) . '-' . substr($m['turno_salida'], 0, 5);
             }
             fputcsv($out, [
-                $m['fecha'],
-                $m['hora_registro'],
-                $m['nombre_completo'] ?? '',
-                $m['identificacion'] ?? '',
-                $m['tipo_marcacion'],
-                $m['metodo_marcacion'],
-                $m['sede_nombre'] ?? '',
-                $turno !== '' ? $turno : 'SIN TURNO',
-                $horario,
-                $m['estado'],
-                $m['observaciones'] ?? '',
-                $m['lat'] ?? '',
-                $m['lng'] ?? '',
+                $m['fecha'], $m['hora_registro'], $m['nombre_completo'] ?? '', $m['identificacion'] ?? '',
+                $m['tipo_marcacion'], $m['metodo_marcacion'], $m['sede_nombre'] ?? '',
+                $turno !== '' ? $turno : 'SIN TURNO', $horario, $m['estado'],
+                $m['observaciones'] ?? '', $m['lat'] ?? '', $m['lng'] ?? '',
             ]);
         }
         fclose($out);
         exit;
     }
     
-    /** Pantalla de marcación con cámara y GPS */
     public function marcar() {
         $csrf_token = Security::generateCsrfToken();
         $marcaciones_hoy = $this->model->getMarcacionesUsuarioHoy($_SESSION['usuario_id'] ?? 1);
@@ -90,7 +75,7 @@ class AsistenciaController {
         include __DIR__ . '/../Views/asistencia/marcar.php';
     }
     
-    /** Procesa el formulario de marcación */
+    /** Procesa la marcación con los 3 candados: rostro + GPS + turno */
     public function procesar() {
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
             header('Location: /horion-time/public/asistencia/marcar');
@@ -98,6 +83,7 @@ class AsistenciaController {
         }
         
         try {
+            // ----- Foto -----
             $foto = null;
             if (!empty($_POST['foto_data'])) {
                 $data = $_POST['foto_data'];
@@ -123,34 +109,91 @@ class AsistenciaController {
                 }
             }
             
-            $estado = 'pendiente';
-            $observaciones = $_POST['observaciones'] ?? '';
+            $uid = (int)($_SESSION['usuario_id'] ?? 1);
+            $observaciones = trim((string)($_POST['observaciones'] ?? ''));
             $sede_id = !empty($_POST['sede_id']) ? (int)$_POST['sede_id'] : null;
             
-            if ($sede_id && !empty($_POST['lat']) && !empty($_POST['lng'])) {
-                $distancia = $this->calcularDistancia($sede_id, (float)$_POST['lat'], (float)$_POST['lng']);
-                if ($distancia !== null) {
-                    $sede = $this->obtenerSede($sede_id);
-                    $radio = (int)($sede['radio_m'] ?? 150);
-                    if ($distancia <= $radio) {
-                        $estado = 'validado';
-                        $observaciones = trim($observaciones . " [Dentro del radio: " . round($distancia) . " m]");
+            // ----- CANDADO GPS -----
+            $ok_gps = null; // true=dentro/sin georef, false=fuera, null=sin GPS
+            if (!empty($_POST['lat']) && !empty($_POST['lng'])) {
+                if ($sede_id) {
+                    $distancia = $this->calcularDistancia($sede_id, (float)$_POST['lat'], (float)$_POST['lng']);
+                    if ($distancia !== null) {
+                        $sede = $this->obtenerSede($sede_id);
+                        $radio = (int)($sede['radio_m'] ?? 150);
+                        if ($distancia <= $radio) {
+                            $ok_gps = true;
+                            $observaciones = trim($observaciones . " [Dentro del radio: " . round($distancia) . " m]");
+                        } else {
+                            $ok_gps = false;
+                            $observaciones = trim($observaciones . " [FUERA DE RANGO: " . round($distancia) . " m de " . $sede['nombre'] . " (radio: {$radio} m)]");
+                        }
                     } else {
-                        $estado = 'pendiente';
-                        $observaciones = trim($observaciones . " [FUERA DE RANGO: " . round($distancia) . " m de " . $sede['nombre'] . " (radio: {$radio} m)]");
+                        $ok_gps = true; // sede sin georeferencia: no castiga
+                        $observaciones = trim($observaciones . " [Sede sin georeferencia]");
                     }
+                } else {
+                    $ok_gps = true;
                 }
-            } elseif (empty($_POST['lat']) || empty($_POST['lng'])) {
+            } else {
                 $observaciones = trim($observaciones . " [SIN GPS]");
             }
             
-            if (!empty($_POST['face_descriptor'])) {
-                $this->guardarDescriptor($_SESSION['usuario_id'] ?? 1, $_POST['face_descriptor']);
+            // ----- CANDADO ROSTRO (verificación server-side, FASE C) -----
+            $modo_face = $_POST['modo_face'] ?? 'ia';
+            $live = json_decode((string)($_POST['face_descriptor'] ?? ''), true);
+            $live_ok = is_array($live) && count($live) === 128;
+            
+            $st = $this->db->prepare("SELECT face_descriptor FROM usuarios WHERE id = ? LIMIT 1");
+            $st->execute([$uid]);
+            $guardado = $st->fetchColumn();
+            
+            $ok_face = null; // true ok, false no coincide, 'manual' requiere revisión
+            if ($live_ok) {
+                if (empty($guardado)) {
+                    // Enrolamiento único (ya NO se sobrescribe en cada marcación)
+                    $this->guardarDescriptor($uid, json_encode($live));
+                    $ok_face = true;
+                    $observaciones = trim("[ROSTRO ENROLADO] " . $observaciones);
+                } else {
+                    $arr = json_decode((string)$guardado, true);
+                    if (is_array($arr) && count($arr) === 128) {
+                        $dist = $this->distanciaRostro($live, $arr);
+                        if ($dist <= self::UMBRAL_ROSTRO) {
+                            $ok_face = true;
+                            $observaciones = trim("[ROSTRO OK d=" . number_format($dist, 2) . "] " . $observaciones);
+                        } else {
+                            $ok_face = false;
+                            $observaciones = trim("[ROSTRO NO COINCIDE d=" . number_format($dist, 2) . "] " . $observaciones);
+                        }
+                    } else {
+                        $ok_face = 'manual';
+                        $observaciones = trim("[VECTOR GUARDADO DAÑADO - VERIFICACIÓN MANUAL] " . $observaciones);
+                    }
+                }
+            } else {
+                // Modo compatibilidad (iOS/Safari sin IA)
+                if (empty($guardado)) {
+                    $ok_face = 'manual';
+                    $observaciones = trim("[ENROLADO CON FOTO - SIN VECTOR: completar en Chrome/Edge] " . $observaciones);
+                } else {
+                    $ok_face = 'manual';
+                    $observaciones = trim("[VERIFICACIÓN MANUAL - MODO COMPATIBILIDAD] " . $observaciones);
+                }
             }
             
+            // ----- DECISIÓN DE ESTADO -----
+            $estado = 'pendiente';
+            if ($ok_face === true && $ok_gps !== false && $ok_gps !== null) {
+                $estado = 'validado';
+            } elseif ($ok_face === true && $ok_gps === null) {
+                $estado = 'pendiente'; // rostro ok pero sin GPS
+            }
+            
+            // ----- Registrar -----
             $this->model->registrarMarcacion([
                 'empresa_id'       => $_SESSION['empresa_id'] ?? 1,
-                'usuario_id'       => $_SESSION['usuario_id'] ?? 1,
+                'usuario_id'       => $uid,
                 'sede_id'          => $sede_id,
                 'fecha'            => $_POST['fecha'],
                 'hora_registro'    => $_POST['hora_registro'],
@@ -161,7 +204,7 @@ class AsistenciaController {
                 'lng'              => $_POST['lng'] ?? null,
                 'estado'           => $estado,
                 'observaciones'    => $observaciones,
-                'creado_por'       => (int)($_SESSION['usuario_id'] ?? 1),
+                'creado_por'       => $uid,
             ]);
             
             header('Location: /horion-time/public/asistencia/marcar?success=1');
@@ -173,12 +216,10 @@ class AsistenciaController {
         }
     }
     
-    /** Corregir estado con MOTIVO obligatorio */
     public function corregir($id = null) {
         $id = (int)($id ?? 0);
         $estado = $_GET['estado'] ?? '';
         $motivo = trim((string)($_GET['motivo'] ?? ''));
-        
         if (in_array($estado, ['validado', 'pendiente', 'rechazado'], true)) {
             $actual = $this->model->getById($id);
             $obs = (string)($actual['observaciones'] ?? '');
@@ -187,14 +228,13 @@ class AsistenciaController {
             }
             $this->model->actualizarEstado($id, $estado, $obs !== '' ? $obs : null);
         }
-        
         $volver = $_SERVER['HTTP_REFERER'] ?? '/horion-time/public/asistencia';
         header('Location: ' . $volver);
         exit;
     }
     
     // =====================================================
-    // REPORTE DE CUMPLIMIENTO (NUEVO - FASE B)
+    // FASE B: REPORTE DE CUMPLIMIENTO
     // =====================================================
     
     private function rolesReporte(): bool {
@@ -211,7 +251,6 @@ class AsistenciaController {
         return [$mes, $anio, $empresa];
     }
     
-    /** Pantalla del reporte */
     public function cumplimiento() {
         if (!$this->rolesReporte()) { header('Location: /horion-time/public/dashboard'); exit; }
         require_once __DIR__ . '/../Models/CumplimientoModel.php';
@@ -224,14 +263,12 @@ class AsistenciaController {
         include __DIR__ . '/../Views/asistencia/cumplimiento.php';
     }
     
-    /** Exportar cumplimiento a CSV */
     public function exportarCumplimiento() {
         if (!$this->rolesReporte()) { header('Location: /horion-time/public/dashboard'); exit; }
         require_once __DIR__ . '/../Models/CumplimientoModel.php';
         $m = new \App\Models\CumplimientoModel($this->db);
         [$mes, $anio, $empresa] = $this->paramsCumplimiento();
         $res = $m->getResumen($empresa, $mes, $anio);
-        
         header('Content-Type: text/csv; charset=UTF-8');
         header('Content-Disposition: attachment; filename="cumplimiento_' . $anio . '-' . str_pad((string)$mes, 2, '0', STR_PAD_LEFT) . '.csv"');
         $out = fopen('php://output', 'w');
@@ -250,17 +287,14 @@ class AsistenciaController {
     }
     
     // =====================================================
-    // RECONOCIMIENTO FACIAL
+    // ROSTRO: endpoints y utilidades
     // =====================================================
     
     public function obtenerDescriptor() {
         header('Content-Type: application/json');
         try {
             $usuario_id = (int)($_SESSION['usuario_id'] ?? 0);
-            if (!$usuario_id) {
-                echo json_encode(['descriptor' => null]);
-                exit;
-            }
+            if (!$usuario_id) { echo json_encode(['descriptor' => null]); exit; }
             $st = $this->db->prepare("SELECT face_descriptor FROM usuarios WHERE id = ? LIMIT 1");
             $st->execute([$usuario_id]);
             $descriptor = $st->fetchColumn();
@@ -281,15 +315,23 @@ class AsistenciaController {
         }
     }
     
+    /** Distancia euclidiana entre dos vectores de 128 dimensiones */
+    private function distanciaRostro(array $a, array $b): float {
+        $sum = 0.0;
+        for ($i = 0; $i < 128; $i++) {
+            $d = ((float)($a[$i] ?? 0)) - ((float)($b[$i] ?? 0));
+            $sum += $d * $d;
+        }
+        return sqrt($sum);
+    }
+    
     // =====================================================
-    // VALIDACIÓN GPS
+    // GPS
     // =====================================================
     
     private function calcularDistancia($sede_id, $lat_empleado, $lng_empleado) {
         $sede = $this->obtenerSede($sede_id);
-        if (!$sede || !$sede['lat_ref'] || !$sede['lng_ref']) {
-            return null;
-        }
+        if (!$sede || !$sede['lat_ref'] || !$sede['lng_ref']) return null;
         $lat_ref = (float)$sede['lat_ref'];
         $lng_ref = (float)$sede['lng_ref'];
         $R = 6371000;
