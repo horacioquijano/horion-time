@@ -11,9 +11,7 @@ class AsistenciaModel {
 
     /**
      * Registrar una nueva marcación
-     * MEJORA: insert dinámico seguro — solo usa las columnas que REALMENTE existen
-     * en la tabla (evita "Unknown column" si alguna no fue creada).
-     * Si todas existen, el comportamiento es exactamente el mismo que antes.
+     * insert dinámico seguro — solo usa las columnas que REALMENTE existen
      */
     public function registrarMarcacion($data) {
         $cols = $this->db->query("SHOW COLUMNS FROM registros_asistencia")->fetchAll(PDO::FETCH_COLUMN);
@@ -49,9 +47,7 @@ class AsistenciaModel {
         return $stmt->execute();
     }
 
-    /**
-     * Obtener marcaciones del día de un usuario
-     */
+    /** Obtener marcaciones del día de un usuario */
     public function getMarcacionesHoy($usuario_id, $fecha = null) {
         $fecha = $fecha ?? date('Y-m-d');
         $stmt = $this->db->prepare("
@@ -66,10 +62,7 @@ class AsistenciaModel {
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    /**
-     * Obtener todas las marcaciones (para admin)
-     * MEJORA: ORDER BY seguro — usa hora_sistema solo si la columna existe
-     */
+    /** Obtener todas las marcaciones (para admin) */
     public function getAllMarcaciones($empresa_id = null, $fecha = null) {
         $sql = "SELECT ra.*, u.nombre_completo, u.identificacion, s.nombre as sede_nombre
                 FROM registros_asistencia ra
@@ -94,10 +87,7 @@ class AsistenciaModel {
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    /**
-     * Actualizar estado de marcación (solo admin)
-     * MEJORA: parámetros opcionales — funciona con 2, 3 o 4 argumentos
-     */
+    /** Actualizar estado de marcación (solo admin) */
     public function actualizarEstado($id, $estado, $observaciones = null, $userRole = null) {
         $userRole = $userRole ?? ($_SESSION['rol_nombre'] ?? '');
         $allowedRoles = ['SuperAdmin', 'Admin_Empresa', 'RRHH'];
@@ -112,9 +102,7 @@ class AsistenciaModel {
         ]);
     }
 
-    /**
-     * Obtener resumen del día para dashboard
-     */
+    /** Obtener resumen del día para dashboard */
     public function getResumenDia($empresa_id, $fecha = null) {
         $fecha = $fecha ?? date('Y-m-d');
         $stmt = $this->db->prepare("
@@ -129,9 +117,7 @@ class AsistenciaModel {
         return $stmt->fetch(PDO::FETCH_ASSOC);
     }
 
-    /**
-     * Obtener resumen de la jornada de HOY para el empleado
-     */
+    /** Obtener resumen de la jornada de HOY para el empleado */
     public function getJornadaHoy($usuario_id, $fecha = null) {
         $fecha = $fecha ?? date('Y-m-d');
         $stmt = $this->db->prepare("
@@ -147,9 +133,7 @@ class AsistenciaModel {
         return $stmt->fetch(PDO::FETCH_ASSOC);
     }
 
-    /**
-     * Calcular horas trabajadas basado en marcaciones
-     */
+    /** Calcular horas trabajadas basado en marcaciones */
     public function calcularHorasTrabajadas($jornada) {
         $horas = 0;
         $entrada     = $jornada['entrada'] ? strtotime("1970-01-01 {$jornada['entrada']} UTC") : null;
@@ -162,9 +146,7 @@ class AsistenciaModel {
         return round($horas / 3600, 2);
     }
 
-    /**
-     * Obtener resumen mensual del empleado
-     */
+    /** Obtener resumen mensual del empleado */
     public function getResumenMensual($usuario_id, $anio, $mes) {
         $stmt = $this->db->prepare("
             SELECT
@@ -178,7 +160,7 @@ class AsistenciaModel {
     }
 
     /* =====================================================
-       NUEVOS MÉTODOS DE APOYO (no modifican los existentes)
+       MÉTODOS DE APOYO
        ===================================================== */
 
     /** Marcaciones por fecha para el listado de admin */
@@ -191,10 +173,8 @@ class AsistenciaModel {
         return $this->getMarcacionesHoy($usuario_id, $fecha);
     }
 
-        /**
-     * Sedes para el selector de marcación:
-     * - Empresa activa: solo SUS sucursales (la empresa es la cabeza/root de ellas)
-     * - SuperAdmin en modo global: todas las empresas, cada una con sus sucursales
+    /**
+     * Sedes para el selector de marcación
      */
     public function getSedes($empresa_id, $todas = false) {
         if ($todas) {
@@ -215,5 +195,50 @@ class AsistenciaModel {
         ");
         $stmt->execute([(int)($empresa_id ?? 1)]);
         return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    /* =====================================================
+       NUEVO (FASE A): LISTADO CON FILTROS + TURNO DEL DÍA
+       ===================================================== */
+
+    /**
+     * Listado con filtros combinados. Cruza con el Panel de Turnos
+     * (turnos_calendario + parametros_turnos) para mostrar la letra
+     * y el horario que le correspondía al empleado ese día.
+     */
+    public function getMarcacionesFiltradas(array $f = []) {
+        $sql = "SELECT ra.*, u.nombre_completo, u.identificacion, s.nombre AS sede_nombre,
+                       tc.codigo AS turno_codigo, pt.nombre AS turno_nombre,
+                       pt.hora_entrada AS turno_entrada, pt.hora_salida AS turno_salida,
+                       pt.color AS turno_color, pt.es_descanso AS turno_descanso,
+                       pt.es_vacacion AS turno_vacacion
+                FROM registros_asistencia ra
+                LEFT JOIN usuarios u ON u.id = ra.usuario_id
+                LEFT JOIN sedes s ON s.id = ra.sede_id
+                LEFT JOIN turnos_calendario tc ON tc.usuario_id = ra.usuario_id AND tc.fecha = ra.fecha
+                LEFT JOIN parametros_turnos pt ON pt.codigo = tc.codigo
+                WHERE 1=1";
+        $params = [];
+        if (!empty($f['fecha_desde'])) { $sql .= " AND ra.fecha >= ?"; $params[] = $f['fecha_desde']; }
+        if (!empty($f['fecha_hasta'])) { $sql .= " AND ra.fecha <= ?"; $params[] = $f['fecha_hasta']; }
+        if (!empty($f['empresa_id']))  { $sql .= " AND ra.empresa_id = ?"; $params[] = (int)$f['empresa_id']; }
+        if (!empty($f['sede_id']))     { $sql .= " AND ra.sede_id = ?"; $params[] = (int)$f['sede_id']; }
+        if (!empty($f['estado']))      { $sql .= " AND ra.estado = ?"; $params[] = $f['estado']; }
+        if (!empty($f['q']))           {
+            $sql .= " AND (u.nombre_completo LIKE ? OR u.identificacion LIKE ?)";
+            $params[] = '%' . $f['q'] . '%';
+            $params[] = '%' . $f['q'] . '%';
+        }
+        $sql .= " ORDER BY ra.fecha DESC, ra.hora_registro DESC LIMIT 500";
+        $st = $this->db->prepare($sql);
+        $st->execute($params);
+        return $st->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /** Una marcación por ID (para correcciones con motivo) */
+    public function getById($id) {
+        $st = $this->db->prepare("SELECT * FROM registros_asistencia WHERE id = ? LIMIT 1");
+        $st->execute([(int)$id]);
+        return $st->fetch(PDO::FETCH_ASSOC) ?: null;
     }
 }
