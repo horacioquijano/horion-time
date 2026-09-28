@@ -14,13 +14,68 @@ class AsistenciaController {
         $this->model = new AsistenciaModel($db);
     }
     
-    /** Listado general con filtro por fecha */
+    /** Construye el array de filtros desde GET (compartido por index y exportar) */
+    private function filtros() {
+        $modoGlobal = (bool)($_SESSION['modo_global'] ?? false);
+        $empresa = $_GET['empresa'] ?? null;
+        return [
+            'fecha_desde' => $_GET['desde'] ?? $_GET['fecha'] ?? date('Y-m-d'),
+            'fecha_hasta' => $_GET['hasta'] ?? $_GET['fecha'] ?? date('Y-m-d'),
+            'empresa_id'  => $modoGlobal ? ($empresa !== '' && $empresa !== null ? (int)$empresa : null) : (int)($_SESSION['empresa_id'] ?? 1),
+            'sede_id'     => ($_GET['sede'] ?? '') !== '' ? (int)$_GET['sede'] : null,
+            'estado'      => ($_GET['estado'] ?? '') !== '' ? $_GET['estado'] : null,
+            'q'           => trim((string)($_GET['q'] ?? '')),
+        ];
+    }
+    
+    /** Listado general con filtros combinados */
     public function index() {
-        $fecha = $_GET['fecha'] ?? date('Y-m-d');
-        $empresa_filtro = (bool)($_SESSION['modo_global'] ?? false) ? null : (int)($_SESSION['empresa_id'] ?? 1);
-        $marcaciones = $this->model->getMarcacionesPorFecha($fecha, $empresa_filtro);
+        $filtros = $this->filtros();
+        $marcaciones = $this->model->getMarcacionesFiltradas($filtros);
+        $modoGlobal = (bool)($_SESSION['modo_global'] ?? false);
+        $sedes = $this->model->getSedes($_SESSION['empresa_id'] ?? 1, $modoGlobal);
+        $empresas = $_SESSION['empresas_lista'] ?? [];
         $GLOBALS['pageTitle'] = 'Registro de Asistencia';
         include __DIR__ . '/../Views/asistencia/index.php';
+    }
+    
+    /** Exportar CSV respetando los filtros aplicados */
+    public function exportar() {
+        $filtros = $this->filtros();
+        $marcaciones = $this->model->getMarcacionesFiltradas($filtros);
+        
+        $nombre = 'asistencia_' . $filtros['fecha_desde'] . '_a_' . $filtros['fecha_hasta'] . '.csv';
+        header('Content-Type: text/csv; charset=UTF-8');
+        header('Content-Disposition: attachment; filename="' . $nombre . '"');
+        
+        $out = fopen('php://output', 'w');
+        fwrite($out, "\xEF\xBB\xBF"); // BOM para tildes en Excel
+        fputcsv($out, ['Fecha','Hora','Empleado','Cédula','Tipo','Método','Sede','Turno del día','Horario turno','Estado','Observaciones','Lat','Lng']);
+        
+        foreach ($marcaciones as $m) {
+            $turno = $m['turno_codigo'] ?? '';
+            $horario = '';
+            if ($turno !== '' && !empty($m['turno_entrada'])) {
+                $horario = substr($m['turno_entrada'], 0, 5) . '-' . substr($m['turno_salida'], 0, 5);
+            }
+            fputcsv($out, [
+                $m['fecha'],
+                $m['hora_registro'],
+                $m['nombre_completo'] ?? '',
+                $m['identificacion'] ?? '',
+                $m['tipo_marcacion'],
+                $m['metodo_marcacion'],
+                $m['sede_nombre'] ?? '',
+                $turno !== '' ? $turno : 'SIN TURNO',
+                $horario,
+                $m['estado'],
+                $m['observaciones'] ?? '',
+                $m['lat'] ?? '',
+                $m['lng'] ?? '',
+            ]);
+        }
+        fclose($out);
+        exit;
     }
     
     /** Pantalla de marcación con cámara y GPS */
@@ -43,7 +98,6 @@ class AsistenciaController {
         }
         
         try {
-            // ===== PROCESAR FOTO =====
             $foto = null;
             if (!empty($_POST['foto_data'])) {
                 $data = $_POST['foto_data'];
@@ -59,11 +113,9 @@ class AsistenciaController {
                 }
             }
             
-            // ===== GARANTIZAR FECHA Y HORA =====
             $_POST['fecha'] = $_POST['fecha'] ?? date('Y-m-d');
             $_POST['hora_registro'] = $_POST['hora_registro'] ?? date('H:i:s');
             
-            // ===== FIX: GPS vacío => NULL =====
             foreach (['lat', 'lng', 'accuracy', 'precision', 'distancia_m'] as $__gps) {
                 if (array_key_exists($__gps, $_POST)) {
                     $__val = trim((string)$_POST[$__gps]);
@@ -71,18 +123,15 @@ class AsistenciaController {
                 }
             }
             
-            // ===== VALIDACIÓN DE DISTANCIA (Haversine) =====
             $estado = 'pendiente';
             $observaciones = $_POST['observaciones'] ?? '';
             $sede_id = !empty($_POST['sede_id']) ? (int)$_POST['sede_id'] : null;
             
             if ($sede_id && !empty($_POST['lat']) && !empty($_POST['lng'])) {
                 $distancia = $this->calcularDistancia($sede_id, (float)$_POST['lat'], (float)$_POST['lng']);
-                
                 if ($distancia !== null) {
                     $sede = $this->obtenerSede($sede_id);
                     $radio = (int)($sede['radio_m'] ?? 150);
-                    
                     if ($distancia <= $radio) {
                         $estado = 'validado';
                         $observaciones = trim($observaciones . " [Dentro del radio: " . round($distancia) . " m]");
@@ -95,12 +144,10 @@ class AsistenciaController {
                 $observaciones = trim($observaciones . " [SIN GPS]");
             }
             
-            // ===== GUARDAR DESCRIPTOR FACIAL SI VIENE =====
             if (!empty($_POST['face_descriptor'])) {
                 $this->guardarDescriptor($_SESSION['usuario_id'] ?? 1, $_POST['face_descriptor']);
             }
             
-            // ===== REGISTRAR MARCACIÓN =====
             $this->model->registrarMarcacion([
                 'empresa_id'       => $_SESSION['empresa_id'] ?? 1,
                 'usuario_id'       => $_SESSION['usuario_id'] ?? 1,
@@ -126,22 +173,30 @@ class AsistenciaController {
         }
     }
     
-    /** Corregir estado desde el listado */
+    /** Corregir estado con MOTIVO obligatorio (queda en observaciones y auditoría) */
     public function corregir($id = null) {
         $id = (int)($id ?? 0);
         $estado = $_GET['estado'] ?? '';
+        $motivo = trim((string)($_GET['motivo'] ?? ''));
+        
         if (in_array($estado, ['validado', 'pendiente', 'rechazado'], true)) {
-            $this->model->actualizarEstado($id, $estado);
+            $actual = $this->model->getById($id);
+            $obs = (string)($actual['observaciones'] ?? '');
+            if ($motivo !== '') {
+                $obs = trim($obs . ' [CORRECCIÓN ' . date('d/m H:i') . ' por ' . ($_SESSION['nombre_completo'] ?? 'admin') . ': ' . $motivo . ']');
+            }
+            $this->model->actualizarEstado($id, $estado, $obs !== '' ? $obs : null);
         }
-        header('Location: /horion-time/public/asistencia');
+        
+        $volver = $_SERVER['HTTP_REFERER'] ?? '/horion-time/public/asistencia';
+        header('Location: ' . $volver);
         exit;
     }
     
     // =====================================================
-    // MÉTODOS PARA RECONOCIMIENTO FACIAL (NUEVOS)
+    // RECONOCIMIENTO FACIAL
     // =====================================================
     
-    /** Endpoint AJAX: obtener descriptor facial del usuario logueado */
     public function obtenerDescriptor() {
         header('Content-Type: application/json');
         try {
@@ -150,11 +205,9 @@ class AsistenciaController {
                 echo json_encode(['descriptor' => null]);
                 exit;
             }
-            
             $st = $this->db->prepare("SELECT face_descriptor FROM usuarios WHERE id = ? LIMIT 1");
             $st->execute([$usuario_id]);
             $descriptor = $st->fetchColumn();
-            
             echo json_encode(['descriptor' => $descriptor ?: null]);
         } catch (\Throwable $e) {
             echo json_encode(['descriptor' => null, 'error' => $e->getMessage()]);
@@ -162,7 +215,6 @@ class AsistenciaController {
         exit;
     }
     
-    /** Guardar descriptor facial (inscripción) */
     private function guardarDescriptor($usuario_id, $descriptor_json) {
         try {
             $st = $this->db->prepare("UPDATE usuarios SET face_descriptor = ? WHERE id = ?");
@@ -174,33 +226,26 @@ class AsistenciaController {
     }
     
     // =====================================================
-    // MÉTODOS PARA VALIDACIÓN GPS (NUEVOS)
+    // VALIDACIÓN GPS
     // =====================================================
     
-    /** Calcular distancia Haversine entre GPS del empleado y sede */
     private function calcularDistancia($sede_id, $lat_empleado, $lng_empleado) {
         $sede = $this->obtenerSede($sede_id);
         if (!$sede || !$sede['lat_ref'] || !$sede['lng_ref']) {
-            return null; // Sede sin georeferencia
+            return null;
         }
-        
         $lat_ref = (float)$sede['lat_ref'];
         $lng_ref = (float)$sede['lng_ref'];
-        
-        // Fórmula de Haversine
-        $R = 6371000; // Radio de la Tierra en metros
+        $R = 6371000;
         $dLat = deg2rad($lat_ref - $lat_empleado);
         $dLng = deg2rad($lng_ref - $lng_empleado);
         $a = sin($dLat/2) * sin($dLat/2) +
              cos(deg2rad($lat_empleado)) * cos(deg2rad($lat_ref)) *
              sin($dLng/2) * sin($dLng/2);
         $c = 2 * atan2(sqrt($a), sqrt(1-$a));
-        $distancia = $R * $c;
-        
-        return $distancia;
+        return $R * $c;
     }
     
-    /** Obtener datos de una sede */
     private function obtenerSede($sede_id) {
         try {
             $st = $this->db->prepare("SELECT id, nombre, lat_ref, lng_ref, radio_m FROM sedes WHERE id = ? LIMIT 1");
