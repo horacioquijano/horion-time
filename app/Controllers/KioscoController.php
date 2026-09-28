@@ -21,9 +21,7 @@ class KioscoController {
         $dispositivo = null;
         if ($token) {
             $dispositivo = $this->dispositivoModel->getByToken($token);
-            if ($dispositivo) {
-                $this->dispositivoModel->updateLastActivity($dispositivo['id']);
-            }
+            if ($dispositivo) $this->dispositivoModel->updateLastActivity($dispositivo['id']);
         }
         require_once __DIR__ . '/../Views/kiosco/index.php';
     }
@@ -34,21 +32,12 @@ class KioscoController {
             $data = json_decode(file_get_contents('php://input'), true) ?? [];
             $dispositivo = $this->dispositivoModel->getByToken((string)($data['token'] ?? ''));
             if (!$dispositivo || (string)($dispositivo['pin_acceso'] ?? '') !== (string)($data['pin'] ?? '')) {
-                echo json_encode(['success' => false, 'message' => 'PIN incorrecto o dispositivo inválido.']);
-                exit;
+                echo json_encode(['success' => false, 'message' => 'PIN incorrecto o dispositivo inválido.']); exit;
             }
             $this->dispositivoModel->updateLastActivity($dispositivo['id']);
-            if (method_exists($this->dispositivoModel, 'logAcceso')) {
-                $this->dispositivoModel->logAcceso($dispositivo['id'], null, 'pin');
-            }
-            echo json_encode([
-                'success' => true,
-                'message' => 'Acceso concedido.',
-                'sede_id' => (int)($dispositivo['sede_id'] ?? 0),
-            ]);
-        } catch (\Throwable $e) {
-            echo json_encode(['success' => false, 'message' => 'Error interno: ' . $e->getMessage()]);
-        }
+            if (method_exists($this->dispositivoModel, 'logAcceso')) $this->dispositivoModel->logAcceso($dispositivo['id'], null, 'pin');
+            echo json_encode(['success' => true, 'message' => 'Acceso concedido.', 'sede_id' => (int)($dispositivo['sede_id'] ?? 0)]);
+        } catch (\Throwable $e) { echo json_encode(['success' => false, 'message' => 'Error interno: ' . $e->getMessage()]); }
         exit;
     }
 
@@ -57,18 +46,11 @@ class KioscoController {
         try {
             $data = json_decode(file_get_contents('php://input'), true) ?? [];
             $ident = trim((string)($data['identificacion'] ?? ''));
-            if ($ident === '') {
-                echo json_encode(['success' => false, 'message' => 'Falta la identificación.']);
-                exit;
-            }
-
+            if ($ident === '') { echo json_encode(['success' => false, 'message' => 'Falta la identificación.']); exit; }
             $stmt = $this->db->prepare("SELECT * FROM usuarios WHERE identificacion = ? AND estado = 'activo' LIMIT 1");
             $stmt->execute([$ident]);
             $usuario = $stmt->fetch(\PDO::FETCH_ASSOC);
-            if (!$usuario) {
-                echo json_encode(['success' => false, 'message' => 'Empleado no encontrado o inactivo.']);
-                exit;
-            }
+            if (!$usuario) { echo json_encode(['success' => false, 'message' => 'Empleado no encontrado o inactivo.']); exit; }
 
             $dispositivo = $this->dispositivoModel->getByToken((string)($data['token'] ?? ''));
             $sede_id = (int)($data['sede_id'] ?? 0) ?: (int)($dispositivo['sede_id'] ?? 0) ?: null;
@@ -81,9 +63,7 @@ class KioscoController {
                     $dir = __DIR__ . '/../../public/uploads/marcaciones/';
                     if (!is_dir($dir)) mkdir($dir, 0777, true);
                     $nombre = 'kiosco_' . (int)$usuario['id'] . '_' . date('Ymd_His') . '.jpg';
-                    if (@file_put_contents($dir . $nombre, $bin)) {
-                        $foto = '/horion-time/public/uploads/marcaciones/' . $nombre;
-                    }
+                    if (@file_put_contents($dir . $nombre, $bin)) $foto = '/horion-time/public/uploads/marcaciones/' . $nombre;
                 }
             }
 
@@ -96,58 +76,41 @@ class KioscoController {
             elseif ($ultima === 'salida_almuerzo') $tipo = 'regreso_almuerzo';
             elseif ($ultima === 'regreso_almuerzo') $tipo = 'salida';
 
-            // ===== FASE D: turno de hoy según Panel =====
-            $estado = 'validado';
-            $obs = '[MARCACIÓN DESDE KIOSCO FÍSICO]';
+            $estado = 'validado'; $obs = '[MARCACIÓN DESDE KIOSCO FÍSICO]';
             $stT = $this->db->prepare("SELECT tc.codigo, pt.es_descanso, pt.es_vacacion, pt.nombre AS turno_nombre
-                                       FROM turnos_calendario tc
-                                       LEFT JOIN parametros_turnos pt ON pt.codigo = tc.codigo
+                                       FROM turnos_calendario tc LEFT JOIN parametros_turnos pt ON pt.codigo = tc.codigo
                                        WHERE tc.usuario_id = ? AND tc.fecha = ? LIMIT 1");
             $stT->execute([(int)$usuario['id'], $hoy]);
             $turno = $stT->fetch(\PDO::FETCH_ASSOC) ?: null;
-
             $nombreEmp = $usuario['nombre_completo'] ?? $ident;
+
             if ($turno && (int)$turno['es_vacacion'] === 1) {
-                $estado = 'pendiente';
-                $obs .= ' [VACACIONES según panel]';
-                $this->notificarRRHH($empresa_id, 'vacacion', '🌴 Marcación en VACACIONES (kiosco)', $nombreEmp . ' marcó en el kiosco estando en vacaciones (' . date('d/m H:i') . ').', null);
+                $estado = 'pendiente'; $obs .= ' [VACACIONES según panel]';
+                $this->alertarRRHH($empresa_id, 'vacacion', '🌴 Marcación en VACACIONES (kiosco)', $nombreEmp . ' marcó en el kiosco estando en vacaciones (' . date('d/m H:i') . ').', 2);
             } elseif ($turno && (int)$turno['es_descanso'] === 1) {
-                $estado = 'pendiente';
-                $obs .= ' [DÍA LIBRE según panel]';
-                $this->notificarRRHH($empresa_id, 'dia_libre', '😴 Marcación en día LIBRE (kiosco)', $nombreEmp . ' marcó en su día de descanso (' . date('d/m H:i') . '). Candidato a horas extra.', null);
+                $estado = 'pendiente'; $obs .= ' [DÍA LIBRE según panel]';
+                $this->alertarRRHH($empresa_id, 'dia_libre', '😴 Marcación en día LIBRE (kiosco)', $nombreEmp . ' marcó en su día de descanso (' . date('d/m H:i') . ').', 1);
             } elseif (!$turno) {
                 $obs .= ' [SIN TURNO PROGRAMADO hoy]';
             }
 
             $metodo = 'kiosco';
             $col = $this->db->query("SHOW COLUMNS FROM registros_asistencia LIKE 'metodo_marcacion'")->fetch(\PDO::FETCH_ASSOC);
-            if ($col && stripos((string)$col['Type'], 'enum') === 0 && strpos((string)$col['Type'], "'kiosco'") === false) {
-                $metodo = 'foto';
-            }
+            if ($col && stripos((string)$col['Type'], 'enum') === 0 && strpos((string)$col['Type'], "'kiosco'") === false) $metodo = 'foto';
 
             $this->asistenciaModel->registrarMarcacion([
-                'usuario_id'       => (int)$usuario['id'],
-                'empresa_id'       => $empresa_id,
-                'sede_id'          => $sede_id,
-                'fecha'            => $hoy,
-                'tipo_marcacion'   => $tipo,
-                'hora_registro'    => date('H:i:s'),
-                'metodo_marcacion' => $metodo,
-                'foto_evidencia'   => $foto,
-                'estado'           => $estado,
-                'observaciones'    => $obs,
+                'usuario_id' => (int)$usuario['id'], 'empresa_id' => $empresa_id, 'sede_id' => $sede_id,
+                'fecha' => $hoy, 'tipo_marcacion' => $tipo, 'hora_registro' => date('H:i:s'),
+                'metodo_marcacion' => $metodo, 'foto_evidencia' => $foto,
+                'estado' => $estado, 'observaciones' => $obs,
             ]);
-
-            if ($dispositivo) {
-                $this->dispositivoModel->updateLastActivity($dispositivo['id']);
-            }
+            if ($dispositivo) $this->dispositivoModel->updateLastActivity($dispositivo['id']);
 
             echo json_encode([
-                'success' => true,
-                'message' => '¡Marcación registrada!',
-                'nombre'  => $usuario['nombre_completo'] ?? '',
-                'tipo'    => ucfirst(str_replace('_', ' ', $tipo)),
-                'foto'    => $usuario['foto_perfil'] ?? null,
+                'success' => true, 'message' => '¡Marcación registrada!',
+                'nombre' => $usuario['nombre_completo'] ?? '',
+                'tipo' => ucfirst(str_replace('_', ' ', $tipo)),
+                'foto' => $usuario['foto_perfil'] ?? null,
             ]);
         } catch (\Throwable $e) {
             echo json_encode(['success' => false, 'message' => 'Error interno: ' . $e->getMessage()]);
@@ -155,11 +118,35 @@ class KioscoController {
         exit;
     }
 
-    /** FASE D: generador de notificaciones (nunca rompe la marcación) */
-    private function notificarRRHH($empresa_id, $tipo, $titulo, $mensaje, $referencia_id = null) {
+    /** Mismo mapeo dinámico que AsistenciaController: inserta en `alertas` oficial */
+    private function alertarRRHH($empresa_id, $tipo, $titulo, $mensaje, $prioridad = 2) {
         try {
-            $st = $this->db->prepare("INSERT INTO notificaciones (empresa_id, tipo, titulo, mensaje, referencia_id, leida) VALUES (?,?,?,?,?,0)");
-            $st->execute([(int)$empresa_id, $tipo, $titulo, $mensaje, $referencia_id]);
+            $cols = $this->db->query("SHOW COLUMNS FROM alertas")->fetchAll(\PDO::FETCH_COLUMN);
+            $row = [
+                'empresa_id' => (int)$empresa_id, 'usuario_id' => null,
+                'tipo' => $tipo, 'titulo' => $titulo, 'mensaje' => $mensaje,
+                'prioridad' => (int)$prioridad, 'leido' => 0,
+            ];
+            $map = [
+                'tipo' => ['tipo','categoria','category'],
+                'titulo' => ['titulo','title','asunto'],
+                'mensaje' => ['mensaje','message','descripcion'],
+                'prioridad' => ['prioridad','priority','nivel'],
+                'leido' => ['leido','leida','read'],
+                'fecha_creacion' => ['fecha_creacion','created_at','fecha','creado_en'],
+            ];
+            $final = [];
+            foreach ($row as $k => $v) {
+                if (in_array($k, $cols, true)) { $final[$k] = $v; continue; }
+                foreach (($map[$k] ?? []) as $alt) { if (in_array($alt, $cols, true)) { $final[$alt] = $v; break; } }
+            }
+            if (!isset($final['fecha_creacion']) && in_array('fecha_creacion', $cols, true)) $final['fecha_creacion'] = date('Y-m-d H:i:s');
+            if (!isset($final['created_at']) && in_array('created_at', $cols, true)) $final['created_at'] = date('Y-m-d H:i:s');
+            $campos = implode(', ', array_map(fn($k) => "`$k`", array_keys($final)));
+            $marks  = implode(', ', array_map(fn($k) => ":$k", array_keys($final)));
+            $st = $this->db->prepare("INSERT INTO alertas ($campos) VALUES ($marks)");
+            foreach ($final as $k => $v) $st->bindValue(":$k", $v);
+            $st->execute();
         } catch (\Throwable $e) { /* silencioso */ }
     }
 }
