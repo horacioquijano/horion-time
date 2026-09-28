@@ -5,6 +5,34 @@ $esSuper = (($_SESSION['rol_nombre'] ?? '') === 'SuperAdmin');
 $empresas_lista = $_SESSION['empresas_lista'] ?? [];
 $empresa_actual = $_SESSION['empresa_id'] ?? null;
 $modo_global = (bool)($_SESSION['modo_global'] ?? true);
+
+// ===== FASE D: Contador REAL de alertas no leídas =====
+$__countAlertas = 0;
+try {
+    $__pdo = (isset($db) && is_object($db)) ? $db : \App\Config\Database::getInstance()->getConnection();
+    $__uid = (int)($_SESSION['usuario_id'] ?? 0);
+    $__eid = (int)($_SESSION['empresa_id'] ?? 0);
+    if ($__uid > 0) {
+        $__cols = $__pdo->query("SHOW COLUMNS FROM alertas")->fetchAll(\PDO::FETCH_COLUMN);
+        $colLeido = in_array('leido', $__cols) ? 'leido' : (in_array('leida', $__cols) ? 'leida' : (in_array('read', $__cols) ? 'read' : null));
+        $colEmpresa = in_array('empresa_id', $__cols) ? 'empresa_id' : null;
+        $colUsuario = in_array('usuario_id', $__cols) ? 'usuario_id' : null;
+        if ($colLeido) {
+            $sql = "SELECT COUNT(*) FROM alertas WHERE `$colLeido` = 0";
+            $params = [];
+            if ($colEmpresa && $__eid > 0 && !$modo_global) {
+                $sql .= " AND `$colEmpresa` = ?"; $params[] = $__eid;
+            }
+            if ($colUsuario) {
+                $sql .= " AND (`$colUsuario` = ? OR `$colUsuario` IS NULL)";
+                $params[] = $__uid;
+            }
+            $__st = $__pdo->prepare($sql);
+            $__st->execute($params);
+            $__countAlertas = (int)$__st->fetchColumn();
+        }
+    }
+} catch (Throwable $e) { $__countAlertas = 0; }
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -45,7 +73,14 @@ $modo_global = (bool)($_SESSION['modo_global'] ?? true);
 <?php endif; ?>
 <div class="search-box"><i class="fas fa-search"></i><input type="text" placeholder="Buscar empleado, empresa..."><kbd>Ctrl K</kbd></div>
 <button class="btn-icon" id="toggleTheme" title="Cambiar tema"><i class="fas fa-moon"></i></button>
-<div class="notification-wrapper"><button class="btn-icon relative" id="notifBtn"><i class="fas fa-bell"></i><span class="badge-dot">3</span></button></div>
+<div class="notification-wrapper">
+    <a href="<?= $basePath ?>/notificaciones" class="btn-icon relative" id="notifBtn" title="Centro de notificaciones" style="text-decoration:none;color:inherit;">
+        <i class="fas fa-bell"></i>
+        <?php if ($__countAlertas > 0): ?>
+            <span class="badge-dot" style="background:#dc2626;color:#fff;min-width:18px;height:18px;padding:0 4px;border-radius:999px;font-size:.7rem;font-weight:800;display:inline-flex;align-items:center;justify-content:center;"><?= $__countAlertas > 99 ? '99+' : $__countAlertas ?></span>
+        <?php endif; ?>
+    </a>
+</div>
 <div class="user-profile">
 <img src="https://ui-avatars.com/api/?name=<?= urlencode($_SESSION['nombre_completo'] ?? 'Admin') ?>&background=03a950&color=fff" alt="Avatar">
 <div class="user-info">
