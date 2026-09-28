@@ -17,7 +17,7 @@ class KioscoController {
         $this->asistenciaModel = new AsistenciaModel($db);
     }
 
-    /** FIX: $token es opcional. Si no viene, muestra pantalla de bienvenida */
+    /** $token opcional: sin token muestra pantalla de conexión */
     public function index($token = null) {
         $dispositivo = null;
         if ($token) {
@@ -29,81 +29,114 @@ class KioscoController {
         require_once __DIR__ . '/../Views/kiosco/index.php';
     }
 
-    // API: Validar PIN
+    /** API: Validar PIN del dispositivo */
     public function validarPin() {
         header('Content-Type: application/json');
-        $data = json_decode(file_get_contents('php://input'), true);
-        
-        $dispositivo = $this->dispositivoModel->getByToken($data['token'] ?? '');
-        if (!$dispositivo || $dispositivo['pin_acceso'] !== $data['pin']) {
-            echo json_encode(['success' => false, 'message' => 'PIN incorrecto o dispositivo inválido.']);
-            exit;
+        try {
+            $data = json_decode(file_get_contents('php://input'), true) ?? [];
+            $dispositivo = $this->dispositivoModel->getByToken((string)($data['token'] ?? ''));
+            if (!$dispositivo || (string)($dispositivo['pin_acceso'] ?? '') !== (string)($data['pin'] ?? '')) {
+                echo json_encode(['success' => false, 'message' => 'PIN incorrecto o dispositivo inválido.']);
+                exit;
+            }
+            $this->dispositivoModel->updateLastActivity($dispositivo['id']);
+            if (method_exists($this->dispositivoModel, 'logAcceso')) {
+                $this->dispositivoModel->logAcceso($dispositivo['id'], null, 'pin');
+            }
+            echo json_encode([
+                'success' => true,
+                'message' => 'Acceso concedido.',
+                'sede_id' => (int)($dispositivo['sede_id'] ?? 0),
+            ]);
+        } catch (\Throwable $e) {
+            echo json_encode(['success' => false, 'message' => 'Error interno: ' . $e->getMessage()]);
         }
-
-        $this->dispositivoModel->updateLastActivity($dispositivo['id']);
-        $this->dispositivoModel->logAcceso($dispositivo['id'], null, 'pin');
-        
-        echo json_encode(['success' => true, 'message' => 'Acceso concedido.', 'sede_id' => $dispositivo['sede_id']]);
         exit;
     }
 
-    // API: Identificar usuario y marcar (MEJORADO: acepta foto y tipo de marcación)
+    /** API: Identificar empleado y registrar marcación (SIN 500: todo controlado) */
     public function identificar() {
         header('Content-Type: application/json');
-        $data = json_decode(file_get_contents('php://input'), true);
-        
-        $stmt = $this->db->prepare("SELECT id, nombre_completo, foto_perfil, empresa_id FROM usuarios WHERE identificacion = :ident AND estado = 'activo'");
-        $stmt->execute([':ident' => $data['identificacion']]);
-        $usuario = $stmt->fetch(\PDO::FETCH_ASSOC);
-
-        if (!$usuario) {
-            echo json_encode(['success' => false, 'message' => 'Empleado no encontrado o inactivo.']);
-            exit;
-        }
-
-        // Guardar foto si viene
-        $foto = null;
-        if (!empty($data['foto_data'])) {
-            $bin = base64_decode(preg_replace('#^data:image/\w+;base64,#i', '', $data['foto_data']));
-            if ($bin) {
-                $dir = __DIR__ . '/../../public/uploads/marcaciones/';
-                if (!is_dir($dir)) mkdir($dir, 0777, true);
-                $nombre = 'kiosco_' . $usuario['id'] . '_' . date('Ymd_His') . '.jpg';
-                file_put_contents($dir . $nombre, $bin);
-                $foto = '/horion-time/public/uploads/marcaciones/' . $nombre;
+        try {
+            $data = json_decode(file_get_contents('php://input'), true) ?? [];
+            $ident = trim((string)($data['identificacion'] ?? ''));
+            if ($ident === '') {
+                echo json_encode(['success' => false, 'message' => 'Falta la identificación.']);
+                exit;
             }
+
+            // SELECT seguro: trae todo y lee claves con ?? (no truena si falta una columna)
+            $stmt = $this->db->prepare("SELECT * FROM usuarios WHERE identificacion = ? AND estado = 'activo' LIMIT 1");
+            $stmt->execute([$ident]);
+            $usuario = $stmt->fetch(\PDO::FETCH_ASSOC);
+            if (!$usuario) {
+                echo json_encode(['success' => false, 'message' => 'Empleado no encontrado o inactivo.']);
+                exit;
+            }
+
+            // Dispositivo: sede de respaldo + actividad
+            $dispositivo = $this->dispositivoModel->getByToken((string)($data['token'] ?? ''));
+            $sede_id = (int)($data['sede_id'] ?? 0) ?: (int)($dispositivo['sede_id'] ?? 0) ?: null;
+
+            // Guardar foto de evidencia
+            $foto = null;
+            if (!empty($data['foto_data'])) {
+                $bin = base64_decode(preg_replace('#^data:image/\w+;base64,#i', '', $data['foto_data']));
+                if ($bin) {
+                    $dir = __DIR__ . '/../../public/uploads/marcaciones/';
+                    if (!is_dir($dir)) mkdir($dir, 0777, true);
+                    $nombre = 'kiosco_' . (int)$usuario['id'] . '_' . date('Ymd_His') . '.jpg';
+                    if (@file_put_contents($dir . $nombre, $bin)) {
+                        $foto = '/horion-time/public/uploads/marcaciones/' . $nombre;
+                    }
+                }
+            }
+
+            // Tipo de marcación automático según la última del día
+            $tipo = 'entrada';
+            $hoy = date('Y-m-d');
+            $st2 = $this->db->prepare("SELECT tipo_marcacion FROM registros_asistencia WHERE usuario_id = ? AND fecha = ? ORDER BY hora_registro DESC LIMIT 1");
+            $st2->execute([(int)$usuario['id'], $hoy]);
+            $ultima = $st2->fetchColumn();
+            if ($ultima === 'entrada') $tipo = 'salida_almuerzo';
+            elseif ($ultima === 'salida_almuerzo') $tipo = 'regreso_almuerzo';
+            elseif ($ultima === 'regreso_almuerzo') $tipo = 'salida';
+
+            // MÉTODO SEGURO: solo usa 'kiosco' si el ENUM lo permite; si no, 'foto'
+            $metodo = 'kiosco';
+            $col = $this->db->query("SHOW COLUMNS FROM registros_asistencia LIKE 'metodo_marcacion'")->fetch(\PDO::FETCH_ASSOC);
+            if ($col && stripos((string)$col['Type'], 'enum') === 0 && strpos((string)$col['Type'], "'kiosco'") === false) {
+                $metodo = 'foto';
+            }
+
+            $this->asistenciaModel->registrarMarcacion([
+                'usuario_id'       => (int)$usuario['id'],
+                'empresa_id'       => (int)($usuario['empresa_id'] ?? 1),
+                'sede_id'          => $sede_id,
+                'fecha'            => $hoy,
+                'tipo_marcacion'   => $tipo,
+                'hora_registro'    => date('H:i:s'),
+                'metodo_marcacion' => $metodo,
+                'foto_evidencia'   => $foto,
+                'estado'           => 'validado',
+                'observaciones'    => '[MARCACIÓN DESDE KIOSCO FÍSICO]',
+            ]);
+
+            if ($dispositivo) {
+                $this->dispositivoModel->updateLastActivity($dispositivo['id']);
+            }
+
+            echo json_encode([
+                'success' => true,
+                'message' => '¡Marcación registrada!',
+                'nombre'  => $usuario['nombre_completo'] ?? '',
+                'tipo'    => ucfirst(str_replace('_', ' ', $tipo)),
+                'foto'    => $usuario['foto_perfil'] ?? null,
+            ]);
+        } catch (\Throwable $e) {
+            // NUNCA más 500 ciego: el kiosco muestra el motivo exacto
+            echo json_encode(['success' => false, 'message' => 'Error interno: ' . $e->getMessage()]);
         }
-
-        // Lógica de tipo de marcación (Entrada/Salida) basada en la última marcación del día
-        $tipo = 'entrada';
-        $hoy = date('Y-m-d');
-        $st2 = $this->db->prepare("SELECT tipo_marcacion FROM registros_asistencia WHERE usuario_id = ? AND fecha = ? ORDER BY hora_registro DESC LIMIT 1");
-        $st2->execute([$usuario['id'], $hoy]);
-        $ultima = $st2->fetchColumn();
-        if ($ultima === 'entrada') $tipo = 'salida_almuerzo';
-        elseif ($ultima === 'salida_almuerzo') $tipo = 'regreso_almuerzo';
-        elseif ($ultima === 'regreso_almuerzo') $tipo = 'salida';
-
-        $this->asistenciaModel->registrarMarcacion([
-            'usuario_id'       => $usuario['id'],
-            'empresa_id'       => $usuario['empresa_id'] ?? $data['empresa_id'] ?? 1,
-            'sede_id'          => $data['sede_id'] ?? null,
-            'fecha'            => $hoy,
-            'tipo_marcacion'   => $tipo,
-            'hora_registro'    => date('H:i:s'),
-            'metodo_marcacion' => 'kiosco',
-            'foto_evidencia'   => $foto,
-            'estado'           => 'validado',
-            'observaciones'    => '[MARCATIÓN DESDE KIOSCO FÍSICO]',
-        ]);
-
-        echo json_encode([
-            'success' => true, 
-            'message' => "¡Marcación registrada!",
-            'nombre' => $usuario['nombre_completo'],
-            'tipo' => ucfirst(str_replace('_', ' ', $tipo)),
-            'foto' => $usuario['foto_perfil']
-        ]);
         exit;
     }
 }
