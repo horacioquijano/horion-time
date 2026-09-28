@@ -17,7 +17,6 @@ class KioscoController {
         $this->asistenciaModel = new AsistenciaModel($db);
     }
 
-    /** $token opcional: sin token muestra pantalla de conexión */
     public function index($token = null) {
         $dispositivo = null;
         if ($token) {
@@ -29,7 +28,6 @@ class KioscoController {
         require_once __DIR__ . '/../Views/kiosco/index.php';
     }
 
-    /** API: Validar PIN del dispositivo */
     public function validarPin() {
         header('Content-Type: application/json');
         try {
@@ -54,7 +52,6 @@ class KioscoController {
         exit;
     }
 
-    /** API: Identificar empleado y registrar marcación (SIN 500: todo controlado) */
     public function identificar() {
         header('Content-Type: application/json');
         try {
@@ -65,7 +62,6 @@ class KioscoController {
                 exit;
             }
 
-            // SELECT seguro: trae todo y lee claves con ?? (no truena si falta una columna)
             $stmt = $this->db->prepare("SELECT * FROM usuarios WHERE identificacion = ? AND estado = 'activo' LIMIT 1");
             $stmt->execute([$ident]);
             $usuario = $stmt->fetch(\PDO::FETCH_ASSOC);
@@ -74,11 +70,10 @@ class KioscoController {
                 exit;
             }
 
-            // Dispositivo: sede de respaldo + actividad
             $dispositivo = $this->dispositivoModel->getByToken((string)($data['token'] ?? ''));
             $sede_id = (int)($data['sede_id'] ?? 0) ?: (int)($dispositivo['sede_id'] ?? 0) ?: null;
+            $empresa_id = (int)($usuario['empresa_id'] ?? ($dispositivo['empresa_id'] ?? 1));
 
-            // Guardar foto de evidencia
             $foto = null;
             if (!empty($data['foto_data'])) {
                 $bin = base64_decode(preg_replace('#^data:image/\w+;base64,#i', '', $data['foto_data']));
@@ -92,7 +87,6 @@ class KioscoController {
                 }
             }
 
-            // Tipo de marcación automático según la última del día
             $tipo = 'entrada';
             $hoy = date('Y-m-d');
             $st2 = $this->db->prepare("SELECT tipo_marcacion FROM registros_asistencia WHERE usuario_id = ? AND fecha = ? ORDER BY hora_registro DESC LIMIT 1");
@@ -102,7 +96,29 @@ class KioscoController {
             elseif ($ultima === 'salida_almuerzo') $tipo = 'regreso_almuerzo';
             elseif ($ultima === 'regreso_almuerzo') $tipo = 'salida';
 
-            // MÉTODO SEGURO: solo usa 'kiosco' si el ENUM lo permite; si no, 'foto'
+            // ===== FASE D: turno de hoy según Panel =====
+            $estado = 'validado';
+            $obs = '[MARCACIÓN DESDE KIOSCO FÍSICO]';
+            $stT = $this->db->prepare("SELECT tc.codigo, pt.es_descanso, pt.es_vacacion, pt.nombre AS turno_nombre
+                                       FROM turnos_calendario tc
+                                       LEFT JOIN parametros_turnos pt ON pt.codigo = tc.codigo
+                                       WHERE tc.usuario_id = ? AND tc.fecha = ? LIMIT 1");
+            $stT->execute([(int)$usuario['id'], $hoy]);
+            $turno = $stT->fetch(\PDO::FETCH_ASSOC) ?: null;
+
+            $nombreEmp = $usuario['nombre_completo'] ?? $ident;
+            if ($turno && (int)$turno['es_vacacion'] === 1) {
+                $estado = 'pendiente';
+                $obs .= ' [VACACIONES según panel]';
+                $this->notificarRRHH($empresa_id, 'vacacion', '🌴 Marcación en VACACIONES (kiosco)', $nombreEmp . ' marcó en el kiosco estando en vacaciones (' . date('d/m H:i') . ').', null);
+            } elseif ($turno && (int)$turno['es_descanso'] === 1) {
+                $estado = 'pendiente';
+                $obs .= ' [DÍA LIBRE según panel]';
+                $this->notificarRRHH($empresa_id, 'dia_libre', '😴 Marcación en día LIBRE (kiosco)', $nombreEmp . ' marcó en su día de descanso (' . date('d/m H:i') . '). Candidato a horas extra.', null);
+            } elseif (!$turno) {
+                $obs .= ' [SIN TURNO PROGRAMADO hoy]';
+            }
+
             $metodo = 'kiosco';
             $col = $this->db->query("SHOW COLUMNS FROM registros_asistencia LIKE 'metodo_marcacion'")->fetch(\PDO::FETCH_ASSOC);
             if ($col && stripos((string)$col['Type'], 'enum') === 0 && strpos((string)$col['Type'], "'kiosco'") === false) {
@@ -111,15 +127,15 @@ class KioscoController {
 
             $this->asistenciaModel->registrarMarcacion([
                 'usuario_id'       => (int)$usuario['id'],
-                'empresa_id'       => (int)($usuario['empresa_id'] ?? 1),
+                'empresa_id'       => $empresa_id,
                 'sede_id'          => $sede_id,
                 'fecha'            => $hoy,
                 'tipo_marcacion'   => $tipo,
                 'hora_registro'    => date('H:i:s'),
                 'metodo_marcacion' => $metodo,
                 'foto_evidencia'   => $foto,
-                'estado'           => 'validado',
-                'observaciones'    => '[MARCACIÓN DESDE KIOSCO FÍSICO]',
+                'estado'           => $estado,
+                'observaciones'    => $obs,
             ]);
 
             if ($dispositivo) {
@@ -134,9 +150,16 @@ class KioscoController {
                 'foto'    => $usuario['foto_perfil'] ?? null,
             ]);
         } catch (\Throwable $e) {
-            // NUNCA más 500 ciego: el kiosco muestra el motivo exacto
             echo json_encode(['success' => false, 'message' => 'Error interno: ' . $e->getMessage()]);
         }
         exit;
+    }
+
+    /** FASE D: generador de notificaciones (nunca rompe la marcación) */
+    private function notificarRRHH($empresa_id, $tipo, $titulo, $mensaje, $referencia_id = null) {
+        try {
+            $st = $this->db->prepare("INSERT INTO notificaciones (empresa_id, tipo, titulo, mensaje, referencia_id, leida) VALUES (?,?,?,?,?,0)");
+            $st->execute([(int)$empresa_id, $tipo, $titulo, $mensaje, $referencia_id]);
+        } catch (\Throwable $e) { /* silencioso */ }
     }
 }
