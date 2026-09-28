@@ -5,13 +5,14 @@ $marcaciones_hoy = $marcaciones_hoy ?? [];
 $sedes = $sedes ?? [];
 
 // =====================================================================
-// TURNO DE HOY SEGÚN PANEL DE TURNOS (letra del día → horas reales)
+// 1) TURNO DE HOY SEGÚN PANEL DE TURNOS
 // =====================================================================
 $turno_hoy = null;
 $noche_en_curso = null;
 try {
     $__pdo = (isset($db) && is_object($db)) ? $db : \App\Config\Database::getInstance()->getConnection();
     $__uid = (int)($_SESSION['usuario_id'] ?? 0);
+    
     $__st = $__pdo->prepare("SELECT tc.codigo, tc.servicio, pt.nombre AS turno_nombre, pt.hora_entrada, pt.hora_salida,
                                     pt.horas_trabajadas, pt.es_descanso, pt.es_vacacion, pt.recargo_nocturno, pt.color
                              FROM turnos_calendario tc
@@ -20,7 +21,6 @@ try {
     $__st->execute([$__uid, date('Y-m-d')]);
     $turno_hoy = $__st->fetch(PDO::FETCH_ASSOC) ?: null;
 
-    // Madrugada: si hoy no hay letra, revisar si ayer había turno NOCHE (cruce de medianoche)
     if (!$turno_hoy && (int)date('G') < 12) {
         $__st2 = $__pdo->prepare("SELECT tc.codigo, pt.nombre AS turno_nombre, pt.hora_entrada, pt.hora_salida, pt.color
                                   FROM turnos_calendario tc
@@ -31,9 +31,36 @@ try {
     }
 } catch (Throwable $e) { $turno_hoy = null; }
 
+// =====================================================================
+// 2) VERIFICAR SI EL USUARIO TIENE ROSTRO ENROLADO
+// =====================================================================
+$tiene_rostro = false;
+try {
+    $__st3 = $__pdo->prepare("SELECT face_descriptor FROM usuarios WHERE id = ? LIMIT 1");
+    $__st3->execute([$__uid]);
+    $fd = $__st3->fetchColumn();
+    $tiene_rostro = !empty($fd);
+} catch (Throwable $e) {}
+
+// =====================================================================
+// 3) SEDES CON GEOLOCALIZACIÓN
+// =====================================================================
+$sedes_json = json_encode(array_map(function($s) {
+    return [
+        'id' => (int)$s['id'],
+        'nombre' => $s['nombre'],
+        'lat_ref' => $s['lat_ref'] ?? null,
+        'lng_ref' => $s['lng_ref'] ?? null,
+        'radio_m' => (int)($s['radio_m'] ?? 150),
+    ];
+}, $sedes));
+
 $mesesEs = [1=>'enero',2=>'febrero',3=>'marzo',4=>'abril',5=>'mayo',6=>'junio',7=>'julio',8=>'agosto',9=>'septiembre',10=>'octubre',11=>'noviembre',12=>'diciembre'];
 $diasEs  = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
 ?>
+
+<!-- face-api.js desde CDN -->
+<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
 
 <div class="kiosk-wrap">
 
@@ -80,8 +107,9 @@ $diasEs  = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'
             <div class="cam-box">
                 <video id="video" autoplay playsinline muted></video>
                 <canvas id="canvas" style="display:none;"></canvas>
+                <canvas id="overlay" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;"></canvas>
                 <div class="cam-oval"></div>
-                <div id="faceStatus" class="cam-status">Iniciando cámara…</div>
+                <div id="faceStatus" class="cam-status">Cargando modelos IA…</div>
             </div>
             <div id="fotoPreview" style="display:none;margin-top:12px;">
                 <img id="previewImg" style="width:100%;border-radius:14px;border:3px solid var(--primary);" />
@@ -95,18 +123,26 @@ $diasEs  = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'
         <!-- Panel mínimo -->
         <div class="card-3d kiosk-panel">
             <h3 style="margin:0 0 4px 0;font-weight:800;">Hola, <?= htmlspecialchars(explode(' ', $_SESSION['nombre_completo'] ?? 'colaborador')[0]) ?> 👋</h3>
-            <p style="color:var(--text-muted);font-size:.85rem;margin:0 0 18px 0;">Ubícate frente a la cámara. El rostro se detecta y captura solo.</p>
+            <p style="color:var(--text-muted);font-size:.85rem;margin:0 0 18px 0;">
+                <?php if ($tiene_rostro): ?>
+                    Ubícate frente a la cámara. Tu rostro se verifica automáticamente.
+                <?php else: ?>
+                    <strong style="color:var(--primary);">Primera vez:</strong> Vamos a enrolar tu rostro. Mira a la cámara, parpadea y sonríe 🙂
+                <?php endif; ?>
+            </p>
 
             <form action="/horion-time/public/asistencia/procesar" method="POST" id="formMarcacion">
                 <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrf_token) ?>">
                 <input type="hidden" name="foto_data" id="fotoData">
+                <input type="hidden" name="face_descriptor" id="faceDescriptorInput">
                 <input type="hidden" name="lat" id="latInput">
                 <input type="hidden" name="lng" id="lngInput">
+                <input type="hidden" name="distancia_m" id="distanciaInput">
                 <input type="hidden" name="metodo_marcacion" value="facial">
                 <input type="hidden" name="tipo_marcacion" id="tipoMarcacionInput" value="entrada">
 
                 <label class="form-label">Sucursal</label>
-                <select name="sede_id" id="sedeSelect" class="form-input" style="margin-bottom:16px;" required>
+                <select name="sede_id" id="sedeSelect" class="form-input" style="margin-bottom:12px;" required onchange="actualizarDistancia()">
                     <option value="">Seleccione sucursal…</option>
                     <?php
                     $grupos = [];
@@ -116,11 +152,20 @@ $diasEs  = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'
                     ?>
                     <optgroup label="🏢 <?= htmlspecialchars($cab) ?>">
                         <?php foreach ($lista as $s): ?>
-                        <option value="<?= (int)$s['id'] ?>"><?= htmlspecialchars($s['nombre']) ?></option>
+                        <option value="<?= (int)$s['id'] ?>" 
+                                data-lat="<?= htmlspecialchars($s['lat_ref'] ?? '') ?>" 
+                                data-lng="<?= htmlspecialchars($s['lng_ref'] ?? '') ?>"
+                                data-radio="<?= (int)($s['radio_m'] ?? 150) ?>">
+                            <?= htmlspecialchars($s['nombre']) ?>
+                        </option>
                         <?php endforeach; ?>
                     </optgroup>
                     <?php endforeach; ?>
                 </select>
+
+                <div id="gpsStatus" style="margin-bottom:14px;padding:8px 12px;background:var(--bg-body,#f8fafc);border-radius:8px;font-size:.82rem;color:var(--text-muted);text-align:center;">
+                    📡 Obteniendo ubicación…
+                </div>
 
                 <label class="form-label">Tipo de marcación</label>
                 <div class="ktipos">
@@ -133,7 +178,6 @@ $diasEs  = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'
                 <button type="submit" class="btn btn-primary kiosk-submit" onclick="return prepararMarcacion()">
                     <i class="fas fa-fingerprint"></i> REGISTRAR MARCACIÓN
                 </button>
-                <div id="gpsMini" style="text-align:center;font-size:.75rem;color:var(--text-muted);margin-top:10px;"> Obteniendo ubicación…</div>
             </form>
         </div>
     </div>
@@ -178,6 +222,9 @@ $diasEs  = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'
 .kiosk-submit{width:100%;padding:16px;font-size:1.05rem;font-weight:800;border-radius:14px;}
 .kiosk-submit.pulse{animation:kpulse 1.2s infinite;}
 @keyframes kpulse{0%,100%{box-shadow:0 0 0 0 rgba(3,169,80,.5);}50%{box-shadow:0 0 0 12px rgba(3,169,80,0);}}
+.gps-ok{background:#dcfce7 !important;color:#166534 !important;}
+.gps-warn{background:#fef3c7 !important;color:#92400e !important;}
+.gps-error{background:#fee2e2 !important;color:#991b1b !important;}
 @media (max-width:860px){
     .kiosk-grid{grid-template-columns:1fr;}
     .kiosk-top{flex-direction:column;align-items:flex-start;}
@@ -186,22 +233,45 @@ $diasEs  = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'
 </style>
 
 <script>
-let stream = null, fotoCapturada = false;
-let faceDetector = null, faceInterval = null, caraEstable = 0;
-const UMBRAL = 4; // ~2 s de rostro estable → captura automática
+const TIENE_ROSTRO = <?= $tiene_rostro ? 'true' : 'false' ?>;
+const SEDES = <?= $sedes_json ?>;
+let stream = null, fotoCapturada = false, faceDescriptorActual = null;
+let modelosCargados = false, deteccionActiva = false;
 
+// =====================================================================
+// RELOJ
+// =====================================================================
 function actualizarReloj(){
     document.getElementById('reloj').textContent = new Date().toLocaleTimeString('es-CO',{hour12:false,timeZone:'America/Bogota'});
 }
 setInterval(actualizarReloj,1000); actualizarReloj();
 
-function setStatus(txt, tipo){
-    const el = document.getElementById('faceStatus');
-    el.textContent = txt;
-    el.style.background = tipo==='ok' ? 'rgba(22,101,52,.92)' : (tipo==='warn' ? 'rgba(146,64,14,.92)' : 'rgba(0,0,0,.72)');
+// =====================================================================
+// FACE-API.JS: cargar modelos
+// =====================================================================
+async function cargarModelos() {
+    setStatus('Cargando modelos IA…','');
+    try {
+        const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model/';
+        await Promise.all([
+            faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+            faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+            faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+        ]);
+        modelosCargados = true;
+        setStatus('✓ Modelos cargados — iniciando cámara…','ok');
+        iniciarCamara();
+    } catch(e) {
+        setStatus('❌ Error cargando IA: ' + e.message,'warn');
+        document.getElementById('btnCapturar').disabled = false;
+    }
 }
 
+// =====================================================================
+// CÁMARA
+// =====================================================================
 async function iniciarCamara(){
+    if (!modelosCargados) { cargarModelos(); return; }
     setStatus('Solicitando cámara…','warn');
     if (stream) stream.getTracks().forEach(t=>t.stop());
     try{
@@ -210,76 +280,236 @@ async function iniciarCamara(){
         v.srcObject = stream;
         document.getElementById('btnCapturar').disabled = false;
         await new Promise(r => v.readyState>=2 ? r() : (v.onloadeddata=r));
-        setStatus('✓ Cámara activa — detectando rostro…','ok');
+        setStatus(TIENE_ROSTRO ? '✓ Verificando rostro…' : '✓ Capturando rostro para enrolar…','ok');
         iniciarDeteccion();
     }catch(e){ setStatus('❌ Sin cámara: ' + e.message,'warn'); }
 }
 
-function iniciarDeteccion(){
-    if (!('FaceDetector' in window)) { setStatus('📷 Captura manual disponible (sin detección automática)',''); return; }
-    try { faceDetector = new FaceDetector({fastMode:true,maxDetectedFaces:1}); } catch(e){ return; }
-    caraEstable = 0;
-    if (faceInterval) clearInterval(faceInterval);
-    faceInterval = setInterval(detectar, 500);
-}
-
-async function detectar(){
-    if (!faceDetector || !stream) return;
-    try{
-        const faces = await faceDetector.detect(document.getElementById('video'));
-        if (faces.length > 0){
-            caraEstable++;
-            if (caraEstable >= UMBRAL && !fotoCapturada){
-                clearInterval(faceInterval); faceInterval = null;
-                setStatus('✓ Rostro reconocido — capturando…','ok');
-                setTimeout(()=>capturarFoto(true), 250);
-            } else if (!fotoCapturada){
-                setStatus('🎯 Rostro detectado — sincronizando…','warn');
+// =====================================================================
+// DETECCIÓN Y RECONOCIMIENTO FACIAL
+// =====================================================================
+async function iniciarDeteccion() {
+    if (deteccionActiva) return;
+    deteccionActiva = true;
+    const v = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const ctx = overlay.getContext('2d');
+    
+    const loop = async () => {
+        if (!deteccionActiva || !stream) return;
+        try {
+            overlay.width = v.videoWidth;
+            overlay.height = v.videoHeight;
+            ctx.clearRect(0, 0, overlay.width, overlay.height);
+            
+            const detection = await faceapi.detectSingleFace(v, new faceapi.TinyFaceDetectorOptions())
+                .withFaceLandmarks()
+                .withFaceDescriptor();
+            
+            if (detection) {
+                const box = detection.detection.box;
+                ctx.strokeStyle = '#03a950';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(box.x, box.y, box.width, box.height);
+                
+                if (!fotoCapturada) {
+                    faceDescriptorActual = detection.descriptor;
+                    
+                    if (TIENE_ROSTRO) {
+                        // MODO VERIFICACIÓN: comparar con descriptor guardado
+                        verificarRostro(detection.descriptor);
+                    } else {
+                        // MODO INSCRIPCIÓN: capturar después de 2 segundos de estabilidad
+                        setStatus('📸 Rostro detectado — mantén la posición…','warn');
+                        setTimeout(() => {
+                            if (!fotoCapturada && faceDescriptorActual) {
+                                capturarFoto(true, faceDescriptorActual);
+                            }
+                        }, 2000);
+                    }
+                }
+            } else {
+                if (!fotoCapturada) {
+                    setStatus(TIENE_ROSTRO ? 'Ubique su rostro dentro del óvalo' : 'Mira a la cámara y sonríe 🙂','');
+                }
             }
-        } else {
-            caraEstable = 0;
-            if (!fotoCapturada) setStatus('Ubique su rostro dentro del óvalo','');
+        } catch(e) {}
+        
+        if (deteccionActiva && !fotoCapturada) {
+            setTimeout(loop, 500);
         }
-    }catch(e){}
+    };
+    loop();
 }
 
-function capturarFoto(auto){
+async function verificarRostro(descriptorActual) {
+    try {
+        const response = await fetch('/horion-time/public/asistencia/obtenerDescriptor');
+        const data = await response.json();
+        if (!data.descriptor) {
+            setStatus('⚠️ Sin rostro enrolado: capturando…','warn');
+            setTimeout(() => capturarFoto(true, descriptorActual), 1500);
+            return;
+        }
+        
+        const descriptorGuardado = new Float32Array(JSON.parse(data.descriptor));
+        const distancia = faceapi.euclideanDistance(descriptorActual, descriptorGuardado);
+        
+        if (distancia <= 0.55) {
+            setStatus('✓ Rostro VERIFICADO — capturando…','ok');
+            deteccionActiva = false;
+            setTimeout(() => capturarFoto(true, descriptorActual), 800);
+        } else {
+            setStatus('⚠️ El rostro no coincide (' + distancia.toFixed(2) + ')','warn');
+        }
+    } catch(e) {
+        setStatus('Error verificando: captura manual','warn');
+    }
+}
+
+// =====================================================================
+// CAPTURA DE FOTO
+// =====================================================================
+function capturarFoto(auto, descriptor = null){
     const v = document.getElementById('video'), c = document.getElementById('canvas'), ctx = c.getContext('2d');
     c.width = v.videoWidth; c.height = v.videoHeight; ctx.drawImage(v,0,0);
     const data = c.toDataURL('image/jpeg',0.8);
     fotoCapturada = true;
+    deteccionActiva = false;
+    
     document.getElementById('fotoData').value = data;
     document.getElementById('previewImg').src = data;
     document.getElementById('fotoPreview').style.display = 'block';
-    if (faceInterval){ clearInterval(faceInterval); faceInterval = null; }
-    setStatus(auto ? '✓ Rostro verificado y capturado' : '✓ Foto capturada','ok');
+    
+    if (descriptor) {
+        document.getElementById('faceDescriptorInput').value = JSON.stringify(Array.from(descriptor));
+    }
+    
+    setStatus(auto ? (TIENE_ROSTRO ? '✓ Rostro verificado' : '✓ Rostro enrolado') : '✓ Foto capturada','ok');
     document.querySelector('.kiosk-submit').classList.add('pulse');
-    if (window.showToast) showToast(auto ? 'Rostro reconocido' : 'Foto capturada','success');
+    if (window.showToast) showToast(auto ? 'Rostro capturado' : 'Foto capturada','success');
 }
 
+// =====================================================================
+// TIPO DE MARCACIÓN
+// =====================================================================
 function setTipo(btn){
     document.querySelectorAll('.ktipo').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById('tipoMarcacionInput').value = btn.dataset.tipo;
 }
 
+// =====================================================================
+// GEOLOCALIZACIÓN Y DISTANCIA
+// =====================================================================
+let latActual = null, lngActual = null;
+
 function obtenerUbicacion(){
-    const el = document.getElementById('gpsMini');
-    if(!navigator.geolocation){ el.textContent='📡 GPS no soportado (se registrará sin ubicación)'; return; }
+    const el = document.getElementById('gpsStatus');
+    el.className = '';
+    el.textContent = '📡 Obteniendo ubicación…';
+    
+    if(!navigator.geolocation){ 
+        el.textContent='📡 GPS no soportado (se registrará sin ubicación)';
+        el.className = 'gps-warn';
+        return; 
+    }
+    
     navigator.geolocation.getCurrentPosition(p=>{
-        document.getElementById('latInput').value = p.coords.latitude;
-        document.getElementById('lngInput').value = p.coords.longitude;
-        el.textContent = '📡 Ubicación obtenida (±' + Math.round(p.coords.accuracy) + ' m)';
-    },()=>{ el.textContent='📡 Sin GPS: se registrará sin ubicación'; },{enableHighAccuracy:true,timeout:10000});
+        latActual = p.coords.latitude;
+        lngActual = p.coords.longitude;
+        document.getElementById('latInput').value = latActual;
+        document.getElementById('lngInput').value = lngActual;
+        actualizarDistancia();
+    }, e => {
+        el.textContent='📡 Sin GPS: se registrará sin ubicación';
+        el.className = 'gps-error';
+    },{enableHighAccuracy:true,timeout:15000,maximumAge:0});
 }
 
+function actualizarDistancia() {
+    const el = document.getElementById('gpsStatus');
+    const sedeSelect = document.getElementById('sedeSelect');
+    const sedeId = parseInt(sedeSelect.value);
+    
+    if (!sedeId || !latActual || !lngActual) {
+        if (latActual && lngActual) {
+            el.textContent = '📡 Ubicación obtenida — selecciona sucursal';
+            el.className = 'gps-ok';
+        }
+        return;
+    }
+    
+    const sede = SEDES.find(s => s.id === sedeId);
+    if (!sede || !sede.lat_ref || !sede.lng_ref) {
+        el.textContent = '📡 Ubicación OK — sucursal sin georeferencia (marca normal)';
+        el.className = 'gps-ok';
+        document.getElementById('distanciaInput').value = '';
+        return;
+    }
+    
+    const distancia = calcularHaversine(latActual, lngActual, sede.lat_ref, sede.lng_ref);
+    document.getElementById('distanciaInput').value = Math.round(distancia);
+    
+    if (distancia <= sede.radio_m) {
+        el.textContent = `✅ A ${Math.round(distancia)} m de ${sede.nombre} (radio: ${sede.radio_m} m)`;
+        el.className = 'gps-ok';
+    } else {
+        el.textContent = `🚫 A ${Math.round(distancia)} m de ${sede.nombre} (fuera del radio de ${sede.radio_m} m)`;
+        el.className = 'gps-error';
+    }
+}
+
+function calcularHaversine(lat1, lon1, lat2, lon2) {
+    const R = 6371000; // metros
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+}
+
+// =====================================================================
+// VALIDACIÓN FINAL
+// =====================================================================
 function prepararMarcacion(){
-    if(!fotoCapturada){ alert('⚠️ Espera la captura del rostro o usa “Captura manual”.'); return false; }
-    if(!document.getElementById('sedeSelect').value){ alert('⚠️ Selecciona tu sucursal.'); return false; }
+    if(!fotoCapturada){ 
+        alert('⚠️ Espera la captura del rostro o usa "Captura manual".'); 
+        return false; 
+    }
+    if(!document.getElementById('sedeSelect').value){ 
+        alert('⚠️ Selecciona tu sucursal.'); 
+        return false; 
+    }
+    
+    const sedeId = parseInt(document.getElementById('sedeSelect').value);
+    const sede = SEDES.find(s => s.id === sedeId);
+    const distancia = parseFloat(document.getElementById('distanciaInput').value);
+    
+    if (sede && sede.lat_ref && sede.lng_ref && distancia > sede.radio_m) {
+        if (!confirm(`⚠️ Estás a ${Math.round(distancia)} m de la sede (radio: ${sede.radio_m} m).\n\n¿Registrar de todos modos? La marcación quedará PENDIENTE para revisión.`)) {
+            return false;
+        }
+    }
+    
     return true;
 }
 
-window.addEventListener('load', ()=>{ obtenerUbicacion(); setTimeout(iniciarCamara, 400); });
+function setStatus(txt, tipo){
+    const el = document.getElementById('faceStatus');
+    el.textContent = txt;
+    el.style.background = tipo==='ok' ? 'rgba(22,101,52,.92)' : (tipo==='warn' ? 'rgba(146,64,14,.92)' : 'rgba(0,0,0,.72)');
+}
+
+// =====================================================================
+// INICIALIZACIÓN
+// =====================================================================
+window.addEventListener('load', ()=>{ 
+    obtenerUbicacion(); 
+    cargarModelos();
+});
 </script>
 
 <?php include __DIR__ . '/../layouts/footer.php'; ?>
