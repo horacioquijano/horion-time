@@ -16,9 +16,6 @@ $lista = $permisos[$rol] ?? $permisos['Empleado'];
 $puede = function ($clave) use ($lista) { return $lista === '*' || in_array($clave, $lista, true); };
 ?>
 <aside class="sidebar" id="sidebar">
-    <button type="button" class="sidebar-close-mobile" onclick="toggleSidebar()" aria-label="Cerrar menú">
-        <i class="fas fa-times"></i>
-    </button>
     <div class="sidebar-header">
         <div class="logo-icon"><i class="fas fa-clock"></i></div>
         <span class="logo-text">HORION TIME</span>
@@ -51,6 +48,7 @@ $puede = function ($clave) use ($lista) { return $lista === '*' || in_array($cla
         <div class="nav-section">
             <span class="nav-title">Sistema</span>
             <?php if ($puede('reportes')): ?><a href="<?= $b ?>/reportes" class="nav-item <?= $cp==='reportes'?'active':'' ?>"><i class="fas fa-file-export"></i><span>Reportes</span></a><?php endif; ?>
+            <?php if ($puede('reportes')): ?><a href="<?= $b ?>/asistencia/cumplimiento" class="nav-item <?= $cp==='cumplimiento'?'active':'' ?>"><i class="fas fa-chart-line"></i><span>Cumplimiento Turnos</span></a><?php endif; ?>
             <?php if ($puede('auditoria')): ?><a href="<?= $b ?>/auditoria" class="nav-item <?= $cp==='auditoria'?'active':'' ?>"><i class="fas fa-shield-alt"></i><span>Auditoría</span></a><?php endif; ?>
             <?php if ($puede('notificaciones')): ?><a href="<?= $b ?>/notificaciones" class="nav-item <?= $cp==='notificaciones'?'active':'' ?>"><i class="fas fa-bell"></i><span>Notificaciones</span></a><?php endif; ?>
             <?php if ($lista === '*'): ?><a href="<?= $b ?>/configuracion" class="nav-item <?= $cp==='configuracion'?'active':'' ?>"><i class="fas fa-cogs"></i><span>Configuración</span></a><?php endif; ?>
@@ -63,6 +61,4 @@ $puede = function ($clave) use ($lista) { return $lista === '*' || in_array($cla
         <a href="<?= $b ?>/logout" class="nav-item text-danger"><i class="fas fa-sign-out-alt"></i><span>Cerrar Sesión</span></a>
     </div>
 </aside>
-<!-- Overlay móvil (fondo oscuro al abrir sidebar) -->
-<div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
 <?php } ?>
