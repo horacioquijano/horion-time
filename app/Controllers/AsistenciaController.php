@@ -49,7 +49,7 @@ class AsistenciaController {
         header('Content-Disposition: attachment; filename="' . $nombre . '"');
         
         $out = fopen('php://output', 'w');
-        fwrite($out, "\xEF\xBB\xBF"); // BOM para tildes en Excel
+        fwrite($out, "\xEF\xBB\xBF");
         fputcsv($out, ['Fecha','Hora','Empleado','Cédula','Tipo','Método','Sede','Turno del día','Horario turno','Estado','Observaciones','Lat','Lng']);
         
         foreach ($marcaciones as $m) {
@@ -173,7 +173,7 @@ class AsistenciaController {
         }
     }
     
-    /** Corregir estado con MOTIVO obligatorio (queda en observaciones y auditoría) */
+    /** Corregir estado con MOTIVO obligatorio */
     public function corregir($id = null) {
         $id = (int)($id ?? 0);
         $estado = $_GET['estado'] ?? '';
@@ -190,6 +190,62 @@ class AsistenciaController {
         
         $volver = $_SERVER['HTTP_REFERER'] ?? '/horion-time/public/asistencia';
         header('Location: ' . $volver);
+        exit;
+    }
+    
+    // =====================================================
+    // REPORTE DE CUMPLIMIENTO (NUEVO - FASE B)
+    // =====================================================
+    
+    private function rolesReporte(): bool {
+        return in_array($_SESSION['rol_nombre'] ?? '', ['SuperAdmin', 'Admin_Empresa', 'RRHH', 'Auditor', 'Contador'], true);
+    }
+    
+    private function paramsCumplimiento(): array {
+        $mes  = (int)($_GET['mes'] ?? date('n'));
+        $anio = (int)($_GET['anio'] ?? date('Y'));
+        $modoGlobal = (bool)($_SESSION['modo_global'] ?? false);
+        $empresa = $modoGlobal
+            ? (($_GET['empresa'] ?? '') !== '' ? (int)$_GET['empresa'] : null)
+            : (int)($_SESSION['empresa_id'] ?? 1);
+        return [$mes, $anio, $empresa];
+    }
+    
+    /** Pantalla del reporte */
+    public function cumplimiento() {
+        if (!$this->rolesReporte()) { header('Location: /horion-time/public/dashboard'); exit; }
+        require_once __DIR__ . '/../Models/CumplimientoModel.php';
+        $m = new \App\Models\CumplimientoModel($this->db);
+        [$mes, $anio, $empresa] = $this->paramsCumplimiento();
+        $res = $m->getResumen($empresa, $mes, $anio);
+        $empresas = $_SESSION['empresas_lista'] ?? [];
+        $GLOBALS['pageTitle'] = 'Cumplimiento de Turnos';
+        $GLOBALS['currentPage'] = 'cumplimiento';
+        include __DIR__ . '/../Views/asistencia/cumplimiento.php';
+    }
+    
+    /** Exportar cumplimiento a CSV */
+    public function exportarCumplimiento() {
+        if (!$this->rolesReporte()) { header('Location: /horion-time/public/dashboard'); exit; }
+        require_once __DIR__ . '/../Models/CumplimientoModel.php';
+        $m = new \App\Models\CumplimientoModel($this->db);
+        [$mes, $anio, $empresa] = $this->paramsCumplimiento();
+        $res = $m->getResumen($empresa, $mes, $anio);
+        
+        header('Content-Type: text/csv; charset=UTF-8');
+        header('Content-Disposition: attachment; filename="cumplimiento_' . $anio . '-' . str_pad((string)$mes, 2, '0', STR_PAD_LEFT) . '.csv"');
+        $out = fopen('php://output', 'w');
+        fwrite($out, "\xEF\xBB\xBF");
+        fputcsv($out, ['Empleado','Cédula','Servicio','Días programados','Días asistidos','Tardanzas','Salidas tempranas','Ausencias','Días extra (L)','Horas extra','Alertas vacaciones','Horas programadas','Horas trabajadas','% Cumplimiento','Marcas sin turno']);
+        foreach ($res['empleados'] as $r) {
+            fputcsv($out, [
+                $r['nombre'], $r['identificacion'], $r['servicio'],
+                $r['dias_prog'], $r['dias_asistidos'], $r['tardanzas'], $r['salidas_tempranas'],
+                $r['ausencias'], $r['dias_extra'], $r['horas_extra'], $r['alertas_vacacion'],
+                $r['horas_prog'], $r['horas_trab'], $r['pct'] ?? 'N/A', $r['marcas_sin_turno'],
+            ]);
+        }
+        fclose($out);
         exit;
     }
     
