@@ -13,7 +13,7 @@ $es_plataforma = $es_plataforma ?? (($_SESSION['rol_nombre'] ?? '') === 'SuperAd
     <?php endif; ?>
 </div>
 
-<?php if (isset($_GET['success'])): ?><div class="card-3d" style="background:#dcfce7;border-left:4px solid var(--success);margin-bottom:24px;color:#166534;"><i class="fas fa-check-circle"></i> Operación realizada con éxito.</div><?php endif; ?>
+<?php if (isset($_GET['success'])): ?><div class="card-3d" style="background:#dcfce7;border-left:4px solid var(--success);margin-bottom:24px;color:#166534;"><i class="fas fa-check-circle"></i> Operación realizada con éxito.<?= isset($_GET['msg']) ? ' ' . htmlspecialchars($_GET['msg']) : '' ?></div><?php endif; ?>
 <?php if (isset($_GET['deleted'])): ?><div class="card-3d" style="background:#fef3c7;border-left:4px solid var(--warning);margin-bottom:24px;color:#92400e;"><i class="fas fa-trash"></i> Registro eliminado.</div><?php endif; ?>
 <?php if (isset($_GET['error'])): ?><div class="card-3d" style="background:#fef2f2;border-left:4px solid #dc2626;margin-bottom:24px;color:#991b1b;"><i class="fas fa-exclamation-triangle"></i> <?= htmlspecialchars($_GET['error']) ?></div><?php endif; ?>
 
@@ -119,19 +119,44 @@ $es_plataforma = $es_plataforma ?? (($_SESSION['rol_nombre'] ?? '') === 'SuperAd
 <div class="modal-overlay" id="modalSedes<?= $eid ?>">
     <div class="modal-content">
         <h3 style="font-weight:800;margin-bottom:6px;"><i class="fas fa-map-marker-alt" style="color:var(--primary);"></i> Sucursales de <?= htmlspecialchars($e['nombre'] ?? '') ?></h3>
-        <p style="color:var(--text-muted);font-size:.85rem;margin-bottom:16px;">Administra las sedes donde operan los empleados de esta empresa.</p>
-        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px;max-height:260px;overflow-y:auto;">
+        <p style="color:var(--text-muted);font-size:.85rem;margin-bottom:16px;">Administra las sedes donde operan los empleados de esta empresa. Usa <b>📍 Georeferenciar</b> para definir el punto exacto y el radio permitido de marcación.</p>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px;max-height:320px;overflow-y:auto;">
             <?php $sedes = $sedesPorEmpresa[$eid] ?? []; ?>
             <?php if (empty($sedes)): ?>
                 <p style="text-align:center;color:var(--text-muted);padding:20px;">Esta empresa aún no tiene sucursales.</p>
-            <?php else: foreach ($sedes as $s): ?>
-                <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg-body);padding:12px 14px;border-radius:10px;">
-                    <div>
-                        <div style="font-weight:700;"><?= htmlspecialchars($s['nombre']) ?></div>
-                        <div style="font-size:.8rem;color:var(--text-muted);"><?= htmlspecialchars(trim(($s['ciudad'] ?? '') . ' ' . ($s['direccion'] ?? ''))) ?></div>
+            <?php else: foreach ($sedes as $s): 
+                $tieneGeo = !empty($s['lat_ref']) && !empty($s['lng_ref']);
+            ?>
+                <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg-body);padding:12px 14px;border-radius:10px;gap:10px;flex-wrap:wrap;">
+                    <div style="flex:1;min-width:180px;">
+                        <div style="font-weight:700;">
+                            <?= htmlspecialchars($s['nombre']) ?>
+                            <?php if ($tieneGeo): ?>
+                                <span class="badge badge-success" style="margin-left:6px;font-size:.7rem;">📍 Georeferenciada</span>
+                            <?php else: ?>
+                                <span class="badge badge-warning" style="margin-left:6px;font-size:.7rem;">Sin georeferencia</span>
+                            <?php endif; ?>
+                        </div>
+                        <div style="font-size:.8rem;color:var(--text-muted);">
+                            <?= htmlspecialchars(trim(($s['ciudad'] ?? '') . ' ' . ($s['direccion'] ?? ''))) ?>
+                            <?php if ($tieneGeo): ?>
+                                <div style="font-size:.75rem;margin-top:2px;">
+                                    <i class="fas fa-crosshairs" style="color:var(--primary);"></i>
+                                    <?= number_format((float)$s['lat_ref'], 6) ?>, <?= number_format((float)$s['lng_ref'], 6) ?>
+                                    · Radio: <b><?= (int)($s['radio_m'] ?? 150) ?> m</b>
+                                </div>
+                            <?php endif; ?>
+                        </div>
                     </div>
-                    <button class="btn btn-danger" style="padding:6px 10px;"
-                        onclick="if(confirm('¿Eliminar la sucursal?')) location='/horion-time/public/empresas/destroySede/<?= (int)$s['id'] ?>'"><i class="fas fa-trash"></i></button>
+                    <div style="display:flex;gap:6px;">
+                        <button class="btn" style="background:rgba(3,169,80,.12);color:var(--primary);padding:6px 10px;font-weight:700;" 
+                                title="Definir ubicación exacta de la sede"
+                                onclick="abrirGeoreferencia(<?= (int)$s['id'] ?>, '<?= htmlspecialchars(addslashes($s['nombre']), ENT_QUOTES) ?>', <?= $tieneGeo ? (float)$s['lat_ref'] : 'null' ?>, <?= $tieneGeo ? (float)$s['lng_ref'] : 'null' ?>, <?= (int)($s['radio_m'] ?? 150) ?>)">
+                            <i class="fas fa-map-marked-alt"></i> Georeferenciar
+                        </button>
+                        <button class="btn btn-danger" style="padding:6px 10px;"
+                            onclick="if(confirm('¿Eliminar la sucursal?')) location='/horion-time/public/empresas/destroySede/<?= (int)$s['id'] ?>'"><i class="fas fa-trash"></i></button>
+                    </div>
                 </div>
             <?php endforeach; endif; ?>
         </div>
@@ -152,8 +177,64 @@ $es_plataforma = $es_plataforma ?? (($_SESSION['rol_nombre'] ?? '') === 'SuperAd
 </div>
 <?php endforeach; ?>
 
+<!-- ===================================================== -->
+<!-- MODAL GEOREFERENCIAR SUCURSAL (NUEVO)                 -->
+<!-- ===================================================== -->
+<div class="modal-overlay" id="modalGeoreferencia">
+    <div class="modal-content" style="max-width:520px;">
+        <h3 style="font-weight:800;margin-bottom:6px;"><i class="fas fa-map-marked-alt" style="color:var(--primary);"></i> Georeferenciar Sucursal</h3>
+        <p style="color:var(--text-muted);font-size:.85rem;margin-bottom:18px;">
+            <b id="geo_sede_nombre"></b><br>
+            Párate físicamente en la entrada de la sede con este dispositivo (tablet/celular) y presiona <b>Capturar ubicación</b>. El punto quedará fijo como referencia.
+        </p>
+
+        <form action="/horion-time/public/empresas/guardarGeoreferencia" method="POST" id="formGeoreferencia">
+            <input type="hidden" name="sede_id" id="geo_sede_id">
+            
+            <div style="background:var(--bg-body);padding:16px;border-radius:12px;margin-bottom:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+                    <span style="font-weight:700;">Coordenadas de referencia</span>
+                    <span id="geo_status" class="badge badge-warning">Sin capturar</span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
+                    <div>
+                        <label class="form-label" style="font-size:.78rem;">Latitud</label>
+                        <input type="text" name="lat_ref" id="geo_lat" class="form-input" readonly placeholder="—">
+                    </div>
+                    <div>
+                        <label class="form-label" style="font-size:.78rem;">Longitud</label>
+                        <input type="text" name="lng_ref" id="geo_lng" class="form-input" readonly placeholder="—">
+                    </div>
+                </div>
+                <button type="button" class="btn btn-primary" style="width:100%;" onclick="capturarUbicacion()">
+                    <i class="fas fa-crosshairs"></i> 📡 Capturar ubicación de ESTE equipo
+                </button>
+                <p id="geo_precision" style="font-size:.78rem;color:var(--text-muted);text-align:center;margin:8px 0 0 0;"></p>
+            </div>
+
+            <div style="margin-bottom:18px;">
+                <label class="form-label">Radio permitido (metros)</label>
+                <input type="number" name="radio_m" id="geo_radio" class="form-input" value="150" min="10" max="5000" step="10">
+                <p style="font-size:.78rem;color:var(--text-muted);margin:6px 0 0 0;">
+                    Distancia máxima a la que un empleado puede registrar la marcación. 
+                    Recomendado: <b>100-150 m</b> para sede urbana, <b>250-500 m</b> para campus con varios pabellones.
+                </p>
+            </div>
+
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+                <button type="button" class="btn" style="background:var(--bg-body);" onclick="closeModal('modalGeoreferencia')">Cancelar</button>
+                <button type="submit" class="btn btn-primary" id="geo_submit" disabled>
+                    <i class="fas fa-save"></i> Guardar Georeferencia
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
-// Agrega filas dinámicas de sucursal al modal de creación
+// =====================================================
+// Crear sucursales dinámicas en el modal de empresa
+// =====================================================
 function agregarSucursal() {
     const cont = document.getElementById('sucursalesContainer');
     const row = document.createElement('div');
@@ -167,7 +248,9 @@ function agregarSucursal() {
     cont.appendChild(row);
 }
 
-// Precarga el modal de edición con los datos de la fila
+// =====================================================
+// Edición de empresa
+// =====================================================
 function abrirEdicion(btn) {
     document.getElementById('edit_id').value = btn.dataset.id;
     document.getElementById('edit_nombre').value = btn.dataset.nombre;
@@ -180,5 +263,77 @@ function abrirEdicion(btn) {
     document.getElementById('formEditarEmpresa').action = '/horion-time/public/empresas/update/' + btn.dataset.id;
     openModal('modalEditarEmpresa');
 }
+
+// =====================================================
+// GEOREFERENCIACIÓN (NUEVO)
+// =====================================================
+function abrirGeoreferencia(sedeId, nombre, lat, lng, radio) {
+    document.getElementById('geo_sede_id').value = sedeId;
+    document.getElementById('geo_sede_nombre').textContent = nombre;
+    document.getElementById('geo_radio').value = radio;
+    document.getElementById('geo_status').textContent = 'Sin capturar';
+    document.getElementById('geo_status').className = 'badge badge-warning';
+    document.getElementById('geo_precision').textContent = '';
+    document.getElementById('geo_submit').disabled = true;
+    
+    if (lat && lng) {
+        document.getElementById('geo_lat').value = parseFloat(lat).toFixed(7);
+        document.getElementById('geo_lng').value = parseFloat(lng).toFixed(7);
+        document.getElementById('geo_status').textContent = 'Coordenadas actuales';
+        document.getElementById('geo_status').className = 'badge badge-info';
+        document.getElementById('geo_submit').disabled = false;
+    } else {
+        document.getElementById('geo_lat').value = '';
+        document.getElementById('geo_lng').value = '';
+    }
+    
+    openModal('modalGeoreferencia');
+}
+
+function capturarUbicacion() {
+    const status = document.getElementById('geo_status');
+    const precision = document.getElementById('geo_precision');
+    
+    if (!navigator.geolocation) {
+        status.textContent = '❌ GPS no soportado';
+        status.className = 'badge badge-danger';
+        return;
+    }
+    
+    status.textContent = '📡 Obteniendo ubicación…';
+    status.className = 'badge badge-warning';
+    precision.textContent = 'Espera unos segundos para máxima precisión…';
+    
+    navigator.geolocation.getCurrentPosition(
+        (pos) => {
+            document.getElementById('geo_lat').value = pos.coords.latitude.toFixed(7);
+            document.getElementById('geo_lng').value = pos.coords.longitude.toFixed(7);
+            const acc = Math.round(pos.coords.accuracy);
+            precision.textContent = 'Precisión: ±' + acc + ' metros';
+            
+            if (acc <= 30) {
+                status.textContent = '✅ Ubicación precisa';
+                status.className = 'badge badge-success';
+            } else if (acc <= 100) {
+                status.textContent = '⚠️ Precisión aceptable';
+                status.className = 'badge badge-warning';
+                precision.textContent += ' (ideal: ≤ 30 m. Espera un poco más si puedes)';
+            } else {
+                status.textContent = '⚠️ Precisión baja';
+                status.className = 'badge badge-warning';
+                precision.textContent += ' (sal al exterior o espera para mejorar)';
+            }
+            
+            document.getElementById('geo_submit').disabled = false;
+        },
+        (err) => {
+            status.textContent = '❌ Error: ' + err.message;
+            status.className = 'badge badge-danger';
+            precision.textContent = 'Verifica que el navegador tenga permiso de ubicación';
+        },
+        { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+    );
+}
 </script>
+
 <?php include __DIR__ . '/../layouts/footer.php'; ?>
