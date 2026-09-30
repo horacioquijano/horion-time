@@ -27,6 +27,21 @@ class HorarioController {
         $horarios = $this->model->getHorarios($empresa_id);
         $empleados = $this->model->getEmpleadosConHorario($empresa_id);
         
+        // ===== FASE G: días programados en el PANEL DE TURNOS (mes en curso) por empleado =====
+        $panelPorUsuario = [];
+        $mesPanel = (int)date('n');
+        $anioPanel = (int)date('Y');
+        try {
+            $st = $this->db->prepare("SELECT usuario_id, COUNT(*) AS dias
+                                      FROM turnos_calendario
+                                      WHERE empresa_id = ? AND YEAR(fecha) = ? AND MONTH(fecha) = ?
+                                      GROUP BY usuario_id");
+            $st->execute([$empresa_id, $anioPanel, $mesPanel]);
+            foreach ($st->fetchAll(\PDO::FETCH_ASSOC) as $r) {
+                $panelPorUsuario[(int)$r['usuario_id']] = (int)$r['dias'];
+            }
+        } catch (\Throwable $e) { $panelPorUsuario = []; }
+        
         $GLOBALS['pageTitle'] = 'Gestión de Horarios';
         include __DIR__ . '/../Views/horarios/index.php';
     }
@@ -46,7 +61,6 @@ class HorarioController {
                 'horas_semanales' => $_POST['horas_semanales'] ?? 48
             ]);
             
-            // Crear turnos para cada día
             $dias = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
             $turnos = [];
             
@@ -111,7 +125,6 @@ class HorarioController {
     //  PANEL DE TURNOS Y CARGA MASIVA
     // ==========================================================
 
-    /** Pantalla principal: Panel Mensual / Carga / Historial / Leyenda */
     public function panelTurnos() {
         require_once __DIR__ . '/../Models/CargaMasivaModel.php';
         $m = new \App\Models\CargaMasivaModel($this->db);
@@ -135,7 +148,6 @@ class HorarioController {
         include __DIR__ . '/../Views/horarios/panel_turnos.php';
     }
 
-    /** Subida del Excel: stage=preview analiza; stage=confirm aplica */
     public function procesarCarga() {
         require_once __DIR__ . '/../Models/CargaMasivaModel.php';
         require_once __DIR__ . '/../Libs/MiniXLSX.php';
@@ -170,7 +182,6 @@ class HorarioController {
                 exit;
             }
 
-            // ---- confirm ----
             $preview = $_SESSION['carga_preview'] ?? null;
             if (!$preview) {
                 throw new \Exception('No hay vista previa vigente: sube el archivo de nuevo.');
@@ -205,7 +216,6 @@ class HorarioController {
         }
     }
 
-    /** Guardar una celda del panel (AJAX) */
     public function guardarCelda() {
         require_once __DIR__ . '/../Models/CargaMasivaModel.php';
         header('Content-Type: application/json');
@@ -247,7 +257,6 @@ class HorarioController {
         exit;
     }
 
-    /** Guardar la leyenda parametrizable */
     public function parametrosTurnos() {
         require_once __DIR__ . '/../Models/CargaMasivaModel.php';
 
@@ -294,7 +303,6 @@ class HorarioController {
         exit;
     }
 
-    /** Revertir un lote completo */
     public function revertirCarga($id = null) {
         require_once __DIR__ . '/../Models/CargaMasivaModel.php';
 
@@ -309,7 +317,7 @@ class HorarioController {
         exit;
     }
 
-    /** GENERA Y DESCARGA LA PLANTILLA .xlsx DEL MES (NUEVO) */
+    /** GENERA Y DESCARGA LA PLANTILLA .xlsx DEL MES */
     public function descargarPlantilla() {
         require_once __DIR__ . '/../Libs/MiniXLSXWriter.php';
         require_once __DIR__ . '/../Models/CargaMasivaModel.php';
@@ -331,7 +339,6 @@ class HorarioController {
         for ($d = 1; $d <= $diasMes; $d++) $head[] = $d;
         $hoja[] = $head;
 
-        // Filas de ejemplo
         $ej1 = ['123456789', 'PEREZ EJEMPLO JUAN', 'AUXILIAR CLINICO', 'URGENCIAS'];
         $ej2 = ['987654321', 'RODRIGUEZ EJEMPLO ANA', 'AUXILIAR CLINICO', 'LAVANDERIA'];
         for ($d = 1; $d <= $diasMes; $d++) {
