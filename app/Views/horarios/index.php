@@ -18,6 +18,9 @@ try {
         $turnosPorHorario[(int)$__t['horario_id']][] = $__t;
     }
 } catch (Throwable $e) { /* si falla, la vista igual carga */ }
+
+$panelPorUsuario = $panelPorUsuario ?? [];
+$mesActualEs = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][(int)date('n') - 1];
 ?>
 
 <main class="main-content">
@@ -91,20 +94,28 @@ try {
     
     <!-- TAB 2: Asignaciones -->
     <div class="tab-content" id="tab-asignaciones" style="display: none;">
+        <div class="card-3d" style="padding:14px 18px;margin-bottom:16px;background:var(--primary-light,#e6f9f0);border-left:4px solid var(--primary);">
+            <div style="font-size:.88rem;color:var(--primary-dark,#02843c);font-weight:600;">
+                <i class="fas fa-info-circle"></i>
+                <b>Nota:</b> "Horario semanal" es el esquema fijo antiguo (opcional). La programación real mes a mes se gestiona en el
+                <b>Panel de Turnos</b> (letras C/N/D/M/L/V). El chip verde indica cuántos días tiene programados cada empleado este mes.
+            </div>
+        </div>
         <div class="card-3d">
             <div class="table-container">
                 <table class="data-table">
                     <thead>
                         <tr>
                             <th>Empleado</th>
-                            <th>Horario Actual</th>
+                            <th>Horario Semanal</th>
+                            <th>Programación Panel (<?= htmlspecialchars($mesActualEs) ?>)</th>
                             <th>Fecha Inicio</th>
                             <th>Fecha Fin</th>
                             <th>Acciones</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($empleados as $emp): ?>
+                        <?php foreach ($empleados as $emp): $diasPanel = (int)($panelPorUsuario[(int)$emp['id']] ?? 0); ?>
                         <tr>
                             <td>
                                 <div style="font-weight: 600;"><?= htmlspecialchars($emp['nombre_completo']) ?></div>
@@ -115,6 +126,13 @@ try {
                                 <span class="badge badge-info"><?= htmlspecialchars($emp['horario_nombre']) ?></span>
                                 <?php else: ?>
                                 <span class="badge badge-danger">Sin horario</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <?php if ($diasPanel > 0): ?>
+                                <span class="badge badge-success"><i class="fas fa-calendar-check"></i> <?= $diasPanel ?> días programados</span>
+                                <?php else: ?>
+                                <span class="badge" style="background:#f1f5f9;color:#94a3b8;"><i class="fas fa-calendar-xmark"></i> Sin programación en Panel</span>
                                 <?php endif; ?>
                             </td>
                             <td><?= $emp['fecha_inicio'] ? date('d/m/Y', strtotime($emp['fecha_inicio'])) : '—' ?></td>
@@ -261,7 +279,6 @@ try {
 </style>
 
 <script>
-// Datos de turnos inyectados desde PHP (NO fetch)
 window.turnosPorHorario = <?= json_encode($turnosPorHorario) ?>;
 window.nombresDias = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
 
@@ -316,7 +333,6 @@ function verDetalleHorario(id) {
     openModal('modalTurnos');
 }
 
-// Fallback si no existe openModal/closeModal en el sistema
 if (typeof openModal !== 'function') {
     window.openModal = function(id) { document.getElementById(id).style.display = 'flex'; };
     window.closeModal = function(id) { document.getElementById(id).style.display = 'none'; };
