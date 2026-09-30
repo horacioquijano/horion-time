@@ -5,6 +5,8 @@ $marcaciones_hoy = $marcaciones_hoy ?? [];
 $marcaciones_semana = $marcaciones_semana ?? [];
 $mis_novedades = $mis_novedades ?? [];
 $resumen_mensual = $resumen_mensual ?? ['dias_trabajados' => 0, 'total_entradas' => 0];
+$turno_hoy = $turno_hoy ?? null;
+$semaforo = $semaforo ?? ['clave'=>'sin_turno','label'=>'Sin turno programado','color'=>'#cbd5e1','icon'=>'question','diff'=>null];
 $tipos = ['entrada' => '🟢 Entrada', 'salida_almuerzo' => '🍽️ Salida Alm.', 'regreso_almuerzo' => '🍽️ Regreso Alm.', 'salida' => '🔴 Salida'];
 ?>
 
@@ -13,6 +15,47 @@ $tipos = ['entrada' => '🟢 Entrada', 'salida_almuerzo' => '🍽️ Salida Alm.
         <i class="fas fa-user-circle" style="color:var(--primary);"></i> Portal del Empleado
     </h2>
     <a href="/horion-time/public/asistencia/marcar" class="btn btn-primary"><i class="fas fa-fingerprint"></i> Ir a Marcar</a>
+</div>
+
+<!-- ===== FASE G: MI TURNO DE HOY ===== -->
+<div class="card-3d" style="margin-bottom:24px;background:linear-gradient(135deg, #ffffff, #f0fdf4);border:2px solid <?= htmlspecialchars($semaforo['color']) ?>33;">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;">
+        <div style="flex:1;min-width:240px;">
+            <div style="font-size:.82rem;color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;">
+                <i class="fas fa-calendar-day" style="color:var(--primary);"></i> Tu turno de hoy
+            </div>
+            <?php if ($turno_hoy): ?>
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+                    <span style="display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:10px;font-weight:900;color:#fff;font-size:1.1rem;background:<?= htmlspecialchars($turno_hoy['color'] ?? '#64748b') ?>;box-shadow:0 4px 12px <?= htmlspecialchars($turno_hoy['color'] ?? '#64748b') ?>44;">
+                        <?= htmlspecialchars($turno_hoy['codigo']) ?>
+                    </span>
+                    <div>
+                        <div style="font-weight:800;font-size:1.05rem;"><?= htmlspecialchars($turno_hoy['turno_nombre'] ?? '') ?></div>
+                        <div style="color:var(--text-muted);font-size:.85rem;font-family:monospace;font-weight:600;">
+                            <?= $turno_hoy['hora_entrada'] ? substr($turno_hoy['hora_entrada'],0,5) . ' – ' . substr($turno_hoy['hora_salida'],0,5) : 'Sin horario' ?>
+                            · <?= (float)$turno_hoy['horas_trabajadas'] ?> h
+                        </div>
+                    </div>
+                </div>
+                <?php if (!empty($turno_hoy['servicio'])): ?>
+                    <div style="font-size:.8rem;color:var(--text-muted);margin-top:4px;">📍 <?= htmlspecialchars($turno_hoy['servicio']) ?></div>
+                <?php endif; ?>
+            <?php else: ?>
+                <div style="color:var(--text-muted);font-style:italic;">Sin turno programado en el Panel</div>
+            <?php endif; ?>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 20px;border-radius:14px;background:<?= htmlspecialchars($semaforo['color']) ?>15;border:1.5px solid <?= htmlspecialchars($semaforo['color']) ?>44;">
+            <i class="fas fa-<?= $semaforo['icon'] ?>" style="font-size:1.8rem;color:<?= htmlspecialchars($semaforo['color']) ?>;"></i>
+            <div>
+                <div style="font-weight:800;color:<?= htmlspecialchars($semaforo['color']) ?>;font-size:1rem;"><?= htmlspecialchars($semaforo['label']) ?></div>
+                <?php if ($semaforo['diff'] !== null): ?>
+                <div style="font-size:.78rem;color:var(--text-muted);">
+                    <?= $semaforo['diff'] > 0 ? '+' . $semaforo['diff'] . ' min vs programado' : ($semaforo['diff'] < 0 ? $semaforo['diff'] . ' min (temprano)' : 'En tu hora exacta') ?>
+                </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
 </div>
 
 <div class="card-3d" style="margin-bottom:24px;">
@@ -34,7 +77,7 @@ $tipos = ['entrada' => '🟢 Entrada', 'salida_almuerzo' => '🍽️ Salida Alm.
             <div style="font-size:.8rem;color:var(--text-muted);">Salida</div>
             <div style="font-size:1.4rem;font-weight:800;color:#991b1b;font-family:monospace;"><?= htmlspecialchars($jornada['salida'] ?? '--:--:--') ?></div>
         </div>
-        <div style="background:linear-gradient(135deg,var(--primary),var(--primary-dark));padding:16px;border-radius:12px;text-align:center;color:#fff;box-shadow:0 4px 15px var(--primary-glow);">
+        <div style="background:linear-gradient(135deg,var(--primary),var(--primary-dark));padding:16px;border-radius:12px;text-align:center;color:#fff;box-shadow:0 4px 15px rgba(3,169,80,.25);">
             <div style="font-size:.8rem;opacity:.85;">Horas Trabajadas</div>
             <div style="font-size:1.4rem;font-weight:800;font-family:monospace;"><?= number_format((float)$horas_trabajadas, 2) ?> h</div>
         </div>
