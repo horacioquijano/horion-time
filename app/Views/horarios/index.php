@@ -3,21 +3,13 @@ session_start();
 include(__DIR__ . '/../layouts/header.php');
 include(__DIR__ . '/../layouts/sidebar.php');
 
-// =====================================================================
-// AUTO-ABASTECIMIENTO: turnos agrupados por horario
-// =====================================================================
 $turnosPorHorario = [];
 try {
-    if (isset($db) && is_object($db)) {
-        $__pdo = $db;
-    } else {
-        $__pdo = \App\Config\Database::getInstance()->getConnection();
-    }
+    if (isset($db) && is_object($db)) { $__pdo = $db; }
+    else { $__pdo = \App\Config\Database::getInstance()->getConnection(); }
     $__rows = $__pdo->query("SELECT horario_id, dia_semana, hora_entrada, hora_salida, es_descanso FROM turnos ORDER BY horario_id, dia_semana")->fetchAll(PDO::FETCH_ASSOC);
-    foreach ($__rows as $__t) {
-        $turnosPorHorario[(int)$__t['horario_id']][] = $__t;
-    }
-} catch (Throwable $e) { /* si falla, la vista igual carga */ }
+    foreach ($__rows as $__t) { $turnosPorHorario[(int)$__t['horario_id']][] = $__t; }
+} catch (Throwable $e) {}
 
 $panelPorUsuario = $panelPorUsuario ?? [];
 $mesActualEs = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][(int)date('n') - 1];
@@ -41,24 +33,22 @@ $mesActualEs = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto
 
 <div style="padding: 32px;">
     <?php if (isset($_GET['success'])): ?>
-    <div class="card-3d" style="background: #dcfce7; border-left: 4px solid var(--success); margin-bottom: 24px; color: #166534;">
+    <div class="card-3d" style="background: #dcfce7; border-left: 4px solid var(--success); margin-bottom: 16px; color: #166534;">
         <i class="fas fa-check-circle"></i> Operación realizada exitosamente
+        <?php if (isset($_GET['msg'])): ?> — <?= htmlspecialchars($_GET['msg']) ?><?php endif; ?>
     </div>
     <?php endif; ?>
-    
     <?php if (isset($_GET['error'])): ?>
-    <div class="card-3d" style="background: #fef2f2; border-left: 4px solid #dc2626; margin-bottom: 24px; color: #991b1b;">
+    <div class="card-3d" style="background: #fef2f2; border-left: 4px solid #dc2626; margin-bottom: 16px; color: #991b1b;">
         <i class="fas fa-exclamation-triangle"></i> <?= htmlspecialchars($_GET['error']) ?>
     </div>
     <?php endif; ?>
     
-    <!-- Tabs -->
     <div style="display: flex; gap: 8px; margin-bottom: 24px; border-bottom: 2px solid var(--border);">
         <button class="tab-btn active" onclick="cambiarTab('horarios', this)">📋 Horarios</button>
         <button class="tab-btn" onclick="cambiarTab('asignaciones', this)">👥 Asignaciones</button>
     </div>
     
-    <!-- TAB 1: Horarios -->
     <div class="tab-content" id="tab-horarios">
         <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 24px;">
             <?php foreach ($horarios as $h): ?>
@@ -72,7 +62,6 @@ $mesActualEs = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto
                     </div>
                     <span class="badge badge-success"><?= $h['empleados_asignados'] ?> empleados</span>
                 </div>
-                
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
                     <div style="background: #f8fafc; padding: 12px; border-radius: 8px;">
                         <div style="font-size: 0.8rem; color: var(--text-muted);">Horas Semanales</div>
@@ -83,7 +72,6 @@ $mesActualEs = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto
                         <div style="font-size: 1.2rem; font-weight: 700; text-transform: capitalize;"><?= $h['estado'] ?></div>
                     </div>
                 </div>
-                
                 <button class="btn" style="background: var(--bg-body); width: 100%;" onclick="verDetalleHorario(<?= $h['id'] ?>)">
                     <i class="fas fa-eye"></i> Ver Turnos
                 </button>
@@ -92,14 +80,18 @@ $mesActualEs = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto
         </div>
     </div>
     
-    <!-- TAB 2: Asignaciones -->
     <div class="tab-content" id="tab-asignaciones" style="display: none;">
-        <div class="card-3d" style="padding:14px 18px;margin-bottom:16px;background:var(--primary-light,#e6f9f0);border-left:4px solid var(--primary);">
-            <div style="font-size:.88rem;color:var(--primary-dark,#02843c);font-weight:600;">
+        <div class="card-3d" style="padding:14px 18px;margin-bottom:16px;background:var(--primary-light,#e6f9f0);border-left:4px solid var(--primary);display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;">
+            <div style="font-size:.88rem;color:var(--primary-dark,#02843c);font-weight:600;flex:1;min-width:260px;">
                 <i class="fas fa-info-circle"></i>
-                <b>Nota:</b> "Horario semanal" es el esquema fijo antiguo (opcional). La programación real mes a mes se gestiona en el
-                <b>Panel de Turnos</b> (letras C/N/D/M/L/V). El chip verde indica cuántos días tiene programados cada empleado este mes.
+                "Horario semanal" se genera <b>automáticamente</b> desde el Panel de Turnos: fijos (administrativos D/M/L) y rotativos (operativos C/N/L).
+                También corre solo al confirmar una carga masiva.
             </div>
+            <a class="btn btn-primary" style="text-decoration:none;white-space:nowrap;"
+               href="/horion-time/public/horarios/sincronizarHorarios?mes=<?= (int)date('n') ?>&anio=<?= (int)date('Y') ?>"
+               onclick="return confirm('¿Sincronizar horarios semanales desde el Panel de Turnos de este mes? Se crearán/reutilizarán horarios y se asignarán automáticamente.');">
+                <i class="fas fa-sync"></i> Sincronizar desde Panel
+            </a>
         </div>
         <div class="card-3d">
             <div class="table-container">
@@ -171,7 +163,6 @@ $mesActualEs = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto
                     <textarea name="descripcion" class="form-input" rows="2" placeholder="Descripción opcional..."></textarea>
                 </div>
             </div>
-            
             <h4 style="margin-bottom: 16px;">Configurar Turnos por Día</h4>
             <?php
             $dias = ['domingo' => 'Domingo', 'lunes' => 'Lunes', 'martes' => 'Martes', 'miercoles' => 'Miércoles', 'jueves' => 'Jueves', 'viernes' => 'Viernes', 'sabado' => 'Sábado'];
@@ -186,26 +177,13 @@ $mesActualEs = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto
                     </label>
                 </div>
                 <div class="dia-config" id="config-<?= $key ?>" style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px;">
-                    <div>
-                        <label class="form-label">Entrada</label>
-                        <input type="time" name="<?= $key ?>_entrada" class="form-input">
-                    </div>
-                    <div>
-                        <label class="form-label">Salida</label>
-                        <input type="time" name="<?= $key ?>_salida" class="form-input">
-                    </div>
-                    <div>
-                        <label class="form-label">Tolerancia Entrada (min)</label>
-                        <input type="number" name="<?= $key ?>_tolerancia_entrada" class="form-input" value="10" min="0">
-                    </div>
-                    <div>
-                        <label class="form-label">Tolerancia Salida (min)</label>
-                        <input type="number" name="<?= $key ?>_tolerancia_salida" class="form-input" value="10" min="0">
-                    </div>
+                    <div><label class="form-label">Entrada</label><input type="time" name="<?= $key ?>_entrada" class="form-input"></div>
+                    <div><label class="form-label">Salida</label><input type="time" name="<?= $key ?>_salida" class="form-input"></div>
+                    <div><label class="form-label">Tolerancia Entrada (min)</label><input type="number" name="<?= $key ?>_tolerancia_entrada" class="form-input" value="10" min="0"></div>
+                    <div><label class="form-label">Tolerancia Salida (min)</label><input type="number" name="<?= $key ?>_tolerancia_salida" class="form-input" value="10" min="0"></div>
                 </div>
             </div>
             <?php endforeach; ?>
-            
             <div style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 24px;">
                 <button type="button" class="btn" style="background: #f1f5f9;" onclick="closeModal('modalCrearHorario')">Cancelar</button>
                 <button type="submit" class="btn btn-primary">Crear Horario</button>
@@ -221,7 +199,6 @@ $mesActualEs = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto
         <form action="/horion-time/public/horarios/asignar" method="POST">
             <input type="hidden" name="usuario_id" id="asignar_usuario_id">
             <p style="color: var(--text-muted); margin-bottom: 16px;" id="asignar_empleado_nombre"></p>
-            
             <div style="margin-bottom: 16px;">
                 <label class="form-label">Horario *</label>
                 <select name="horario_id" class="form-input" required>
@@ -231,18 +208,15 @@ $mesActualEs = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto
                     <?php endforeach; ?>
                 </select>
             </div>
-            
             <div style="margin-bottom: 16px;">
                 <label class="form-label">Fecha de Inicio *</label>
                 <input type="date" name="fecha_inicio" class="form-input" value="<?= date('Y-m-d') ?>" required>
             </div>
-            
             <div style="margin-bottom: 16px;">
                 <label class="form-label">Fecha de Fin (opcional)</label>
                 <input type="date" name="fecha_fin" class="form-input">
                 <small style="color: var(--text-muted);">Dejar vacío para asignación indefinida</small>
             </div>
-            
             <div style="display: flex; gap: 12px; justify-content: flex-end;">
                 <button type="button" class="btn" style="background: #f1f5f9;" onclick="closeModal('modalAsignar')">Cancelar</button>
                 <button type="submit" class="btn btn-primary">Asignar Horario</button>
@@ -265,12 +239,8 @@ $mesActualEs = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto
 </div>
 
 <style>
-.tab-btn {
-    padding: 12px 20px; background: none; border: none; border-bottom: 3px solid transparent;
-    font-weight: 600; color: var(--text-muted); cursor: pointer; transition: all 0.2s;
-}
+.tab-btn { padding: 12px 20px; background: none; border: none; border-bottom: 3px solid transparent; font-weight: 600; color: var(--text-muted); cursor: pointer; transition: all 0.2s; }
 .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
-
 .tabla-turnos { width: 100%; border-collapse: collapse; margin-top: 8px; }
 .tabla-turnos th, .tabla-turnos td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; text-align: left; }
 .tabla-turnos th { background: #f8fafc; font-weight: 700; color: #334155; }
@@ -288,51 +258,34 @@ function cambiarTab(tabId, btn) {
     btn.classList.add('active');
     document.getElementById('tab-' + tabId).style.display = 'block';
 }
-
 function toggleDia(dia) {
     const config = document.getElementById('config-' + dia);
     const checkbox = document.querySelector('[name="' + dia + '_descanso"]');
     config.style.opacity = checkbox.checked ? '0.3' : '1';
     config.style.pointerEvents = checkbox.checked ? 'none' : 'auto';
 }
-
 function openAsignarModal(usuarioId, nombre) {
     document.getElementById('asignar_usuario_id').value = usuarioId;
     document.getElementById('asignar_empleado_nombre').textContent = 'Empleado: ' + nombre;
     openModal('modalAsignar');
 }
-
 function verDetalleHorario(id) {
     const turnos = window.turnosPorHorario[id] || [];
     let html = '';
-
     if (turnos.length === 0) {
-        html = '<div style="text-align:center; padding: 30px; color: var(--text-muted);">' +
-               '<i class="fas fa-calendar-times" style="font-size: 2rem; margin-bottom: 10px;"></i>' +
-               '<p>Este horario aún no tiene turnos configurados.</p>' +
-               '</div>';
+        html = '<div style="text-align:center; padding: 30px; color: var(--text-muted);"><i class="fas fa-calendar-times" style="font-size: 2rem; margin-bottom: 10px;"></i><p>Este horario aún no tiene turnos configurados.</p></div>';
     } else {
-        html = '<table class="tabla-turnos">';
-        html += '<thead><tr><th>Día</th><th>Entrada</th><th>Salida</th><th>Estado</th></tr></thead><tbody>';
+        html = '<table class="tabla-turnos"><thead><tr><th>Día</th><th>Entrada</th><th>Salida</th><th>Estado</th></tr></thead><tbody>';
         turnos.forEach(t => {
             const dia = window.nombresDias[parseInt(t.dia_semana)] || ('Día ' + t.dia_semana);
-            const estado = parseInt(t.es_descanso) === 1
-                ? '<span class="badge-descanso">Descanso</span>'
-                : '<span class="badge badge-success">Laboral</span>';
-            html += `<tr>
-                        <td><strong>${dia}</strong></td>
-                        <td>${t.hora_entrada || '—'}</td>
-                        <td>${t.hora_salida || '—'}</td>
-                        <td>${estado}</td>
-                     </tr>`;
+            const estado = parseInt(t.es_descanso) === 1 ? '<span class="badge-descanso">Descanso</span>' : '<span class="badge badge-success">Laboral</span>';
+            html += `<tr><td><strong>${dia}</strong></td><td>${t.hora_entrada || '—'}</td><td>${t.hora_salida || '—'}</td><td>${estado}</td></tr>`;
         });
         html += '</tbody></table>';
     }
-
     document.getElementById('modalTurnosBody').innerHTML = html;
     openModal('modalTurnos');
 }
-
 if (typeof openModal !== 'function') {
     window.openModal = function(id) { document.getElementById(id).style.display = 'flex'; };
     window.closeModal = function(id) { document.getElementById(id).style.display = 'none'; };
