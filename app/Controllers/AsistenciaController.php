@@ -1,4 +1,5 @@
 <?php
+namespace App\Controllers;<?php
 namespace App\Controllers;
 require_once __DIR__ . '/../Models/AsistenciaModel.php';
 require_once __DIR__ . '/../Helpers/Security.php';
@@ -107,8 +108,8 @@ class AsistenciaController {
             $observaciones = trim((string)($_POST['observaciones'] ?? ''));
             $sede_id = !empty($_POST['sede_id']) ? (int)$_POST['sede_id'] : null;
             
-            // GPS
-            $ok_gps = null;
+            // ----- CANDADO GPS -----
+            $ok_gps = null; // true=dentro/sin georef, false=fuera, null=sin GPS
             if (!empty($_POST['lat']) && !empty($_POST['lng'])) {
                 if ($sede_id) {
                     $distancia = $this->calcularDistancia($sede_id, (float)$_POST['lat'], (float)$_POST['lng']);
@@ -131,13 +132,13 @@ class AsistenciaController {
                 $observaciones = trim($observaciones . " [SIN GPS]");
             }
             
-            // Rostro
+            // ----- CANDADO ROSTRO -----
             $live = json_decode((string)($_POST['face_descriptor'] ?? ''), true);
             $live_ok = is_array($live) && count($live) === 128;
             $st = $this->db->prepare("SELECT face_descriptor FROM usuarios WHERE id = ? LIMIT 1");
             $st->execute([$uid]);
             $guardado = $st->fetchColumn();
-            $ok_face = null;
+            $ok_face = null; // true, false, o 'manual'
             if ($live_ok) {
                 if (empty($guardado)) {
                     $this->guardarDescriptor($uid, json_encode($live));
@@ -169,13 +170,32 @@ class AsistenciaController {
                 }
             }
             
-            // Turno de hoy
+            // ----- TURNO DE HOY (Panel) -----
             $turno = $this->turnoDeHoy($uid);
-            if ($turno && (int)$turno['es_vacacion'] === 1) $observaciones = trim("[VACACIONES según panel] " . $observaciones);
-            elseif ($turno && (int)$turno['es_descanso'] === 1) $observaciones = trim("[DÍA LIBRE según panel] " . $observaciones);
+            $es_vacacion = $turno && (int)$turno['es_vacacion'] === 1;
+            $es_libre    = $turno && (int)$turno['es_descanso'] === 1;
+            if ($es_vacacion) $observaciones = trim("[VACACIONES según panel] " . $observaciones);
+            elseif ($es_libre) $observaciones = trim("[DÍA LIBRE según panel: candidato a horas extra] " . $observaciones);
             elseif (!$turno) $observaciones = trim("[SIN TURNO PROGRAMADO] " . $observaciones);
             
-            $estado = ($ok_face === true && $ok_gps === true) ? 'validado' : 'pendiente';
+            // ===== AUTO-VALIDACIÓN (sin aprobación manual en flujo normal) =====
+            // Dentro del radio de la sede = presencia confirmada → el sistema valida SOLO.
+            // RRHH solo revisa excepciones: vacaciones, rostro no coincide, fuera de rango, sin GPS.
+            $estado = 'pendiente';
+            if ($es_vacacion) {
+                $estado = 'pendiente';
+            } elseif ($ok_face === false) {
+                $estado = 'pendiente';
+            } elseif ($ok_gps === false) {
+                $estado = 'pendiente';
+            } elseif ($ok_gps === null) {
+                $estado = 'pendiente';
+            } else {
+                $estado = 'validado';
+                $observaciones = trim($observaciones . ($ok_face === 'manual'
+                    ? " [AUTO-VALIDADO por GPS: rostro en modo compatibilidad]"
+                    : " [AUTO-VALIDADO: GPS dentro de rango + rostro OK]"));
+            }
             
             $this->model->registrarMarcacion([
                 'empresa_id' => $empresa_id, 'usuario_id' => $uid, 'sede_id' => $sede_id,
@@ -187,23 +207,13 @@ class AsistenciaController {
             ]);
             $refId = (int)$this->db->lastInsertId();
             
-            // ALERTAS en la tabla oficial `alertas` (FASE D)
+            // ----- ALERTAS AUTOMÁTICAS (solo excepciones) -----
             $nombreEmp = $_SESSION['nombre_completo'] ?? ('Usuario ' . $uid);
             $hora = date('d/m H:i');
-            if ($ok_gps === false) {
-                $this->alertarRRHH($empresa_id, 'geocerca', '🚨 Marcación fuera de rango', $nombreEmp . ' marcó fuera del radio (' . $hora . ').', 2);
-            }
-            if ($ok_face === false) {
-                $this->alertarRRHH($empresa_id, 'rostro', '⚠️ Rostro no coincide', 'Posible suplantación de ' . $nombreEmp . ' (' . $hora . ').', 3);
-            }
-            if ($ok_face === 'manual') {
-                $this->alertarRRHH($empresa_id, 'rostro_manual', '📷 Verificación manual requerida', $nombreEmp . ' en modo compatibilidad (' . $hora . ').', 1);
-            }
-            if ($turno && (int)$turno['es_vacacion'] === 1) {
-                $this->alertarRRHH($empresa_id, 'vacacion', '🌴 Marcación en VACACIONES', $nombreEmp . ' marcó estando en vacaciones (' . $hora . ').', 2);
-            } elseif ($turno && (int)$turno['es_descanso'] === 1) {
-                $this->alertarRRHH($empresa_id, 'dia_libre', '😴 Marcación en día LIBRE', $nombreEmp . ' marcó en día de descanso (' . $hora . ').', 1);
-            }
+            if ($ok_gps === false) $this->alertarRRHH($empresa_id, 'geocerca', '🚨 Marcación fuera de rango', $nombreEmp . ' marcó fuera del radio (' . $hora . ').', 2);
+            if ($ok_face === false) $this->alertarRRHH($empresa_id, 'rostro', '⚠️ Rostro no coincide', 'Posible suplantación de ' . $nombreEmp . ' (' . $hora . ').', 3);
+            if ($es_vacacion) $this->alertarRRHH($empresa_id, 'vacacion', '🌴 Marcación en VACACIONES', $nombreEmp . ' marcó estando en vacaciones (' . $hora . ').', 2);
+            elseif ($es_libre) $this->alertarRRHH($empresa_id, 'dia_libre', '😴 Marcación en día LIBRE', $nombreEmp . ' marcó en día de descanso (' . $hora . '). Candidato a horas extra.', 1);
             
             header('Location: /horion-time/public/asistencia/marcar?success=1'); exit;
         } catch (\Exception $e) {
@@ -227,7 +237,72 @@ class AsistenciaController {
         header('Location: ' . $volver); exit;
     }
     
-    // ============ FASE D: ALERTAS AUTOMÁTICAS ============
+    // =====================================================
+    // CONTROL DEL DÍA (detalle coordinadores/jefes de área)
+    // =====================================================
+    
+    private function rolesControlDia(): bool {
+        return in_array($_SESSION['rol_nombre'] ?? '', ['SuperAdmin', 'Admin_Empresa', 'RRHH', 'Supervisor'], true);
+    }
+    
+    private function paramsControlDia(): array {
+        $fecha = $_GET['fecha'] ?? date('Y-m-d');
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $fecha)) $fecha = date('Y-m-d');
+        return [$fecha, $_GET['estado'] ?? '', $_GET['turno'] ?? ''];
+    }
+    
+    private function detalleConServicio($empresa_id, $fecha, $fEstado, $fTurno) {
+        require_once __DIR__ . '/../Models/DashboardModel.php';
+        $dash = new \App\Models\DashboardModel($this->db);
+        $detalle = $dash->getEstadoDiaDetallado($empresa_id, $fecha, $fEstado, $fTurno);
+        try {
+            $st = $this->db->prepare("SELECT usuario_id, MAX(servicio) AS servicio FROM turnos_calendario WHERE fecha = ? AND empresa_id = ? GROUP BY usuario_id");
+            $st->execute([$fecha, (int)$empresa_id]);
+            $serv = [];
+            foreach ($st->fetchAll(\PDO::FETCH_ASSOC) as $r) $serv[(int)$r['usuario_id']] = $r['servicio'];
+            foreach ($detalle as &$row) $row['servicio'] = $serv[(int)$row['usuario_id']] ?? '';
+            unset($row);
+        } catch (\Throwable $e) {}
+        return [$dash, $detalle];
+    }
+    
+    public function controlDia() {
+        if (!$this->rolesControlDia()) { header('Location: /horion-time/public/dashboard'); exit; }
+        [$fecha, $fEstado, $fTurno] = $this->paramsControlDia();
+        $empresa_id = (int)($_SESSION['empresa_id'] ?? 1);
+        [$dash, $detalle] = $this->detalleConServicio($empresa_id, $fecha, $fEstado, $fTurno);
+        $resumen = $dash->getResumenDiaPanel($empresa_id, $fecha);
+        $conteos = $dash->getConteosEstadoDia($empresa_id, $fecha);
+        $GLOBALS['pageTitle'] = 'Control del Día';
+        include __DIR__ . '/../Views/asistencia/control_dia.php';
+    }
+    
+    public function exportarControlDia() {
+        if (!$this->rolesControlDia()) { header('Location: /horion-time/public/dashboard'); exit; }
+        [$fecha, $fEstado, $fTurno] = $this->paramsControlDia();
+        $empresa_id = (int)($_SESSION['empresa_id'] ?? 1);
+        [, $detalle] = $this->detalleConServicio($empresa_id, $fecha, $fEstado, $fTurno);
+        header('Content-Type: text/csv; charset=UTF-8');
+        header('Content-Disposition: attachment; filename="control_dia_' . $fecha . '.csv"');
+        $out = fopen('php://output', 'w');
+        fwrite($out, "\xEF\xBB\xBF");
+        fputcsv($out, ['Cédula','Empleado','Servicio','Sede','Turno','Horario','Hora entrada','Hora salida','Estado','Diferencia (min)']);
+        foreach ($detalle as $f) {
+            $h = '';
+            if (!empty($f['hora_entrada'])) $h = substr($f['hora_entrada'],0,5) . '-' . substr($f['hora_salida'] ?? '',0,5);
+            fputcsv($out, [
+                $f['identificacion'] ?? '', $f['nombre_completo'] ?? '', $f['servicio'] ?? '', $f['sede_nombre'] ?? '',
+                $f['turno_codigo'] ?? '', $h, $f['entrada_real'] ?? '', $f['salida_real'] ?? '',
+                $f['estado']['label'] ?? '', $f['estado']['diff'] !== null ? $f['estado']['diff'] : '',
+            ]);
+        }
+        fclose($out);
+        exit;
+    }
+    
+    // =====================================================
+    // ALERTAS AUTOMÁTICAS
+    // =====================================================
     
     private function turnoDeHoy($uid) {
         try {
@@ -239,47 +314,29 @@ class AsistenciaController {
         } catch (\Throwable $e) { return null; }
     }
     
-    /**
-     * Inserta alerta en la tabla OFICIAL `alertas` (usuario_id=NULL → todos los admins/RRHH la ven)
-     * Prioridad: 1=info, 2=warning, 3=critical
-     */
     private function alertarRRHH($empresa_id, $tipo, $titulo, $mensaje, $prioridad = 2) {
         try {
-            // Detecta columnas reales (por si la tabla no tiene 'tipo' o 'titulo')
             $cols = $this->db->query("SHOW COLUMNS FROM alertas")->fetchAll(\PDO::FETCH_COLUMN);
             $row = [
-                'empresa_id' => (int)$empresa_id,
-                'usuario_id' => null,
-                'tipo'       => $tipo,
-                'titulo'     => $titulo,
-                'mensaje'    => $mensaje,
-                'prioridad'  => (int)$prioridad,
-                'leido'      => 0,
+                'empresa_id' => (int)$empresa_id, 'usuario_id' => null,
+                'tipo' => $tipo, 'titulo' => $titulo, 'mensaje' => $mensaje,
+                'prioridad' => (int)$prioridad, 'leido' => 0,
             ];
-            // Mapeo de columnas alternativas por si la tabla tiene otros nombres
             $map = [
-                'tipo'       => ['tipo','categoria','category'],
-                'titulo'     => ['titulo','title','asunto'],
-                'mensaje'    => ['mensaje','message','descripcion','descripcion'],
-                'prioridad'  => ['prioridad','priority','nivel'],
-                'leido'      => ['leido','leida','read'],
+                'tipo' => ['tipo','categoria','category'],
+                'titulo' => ['titulo','title','asunto'],
+                'mensaje' => ['mensaje','message','descripcion'],
+                'prioridad' => ['prioridad','priority','nivel'],
+                'leido' => ['leido','leida','read'],
                 'fecha_creacion' => ['fecha_creacion','created_at','fecha','creado_en'],
             ];
             $final = [];
             foreach ($row as $k => $v) {
                 if (in_array($k, $cols, true)) { $final[$k] = $v; continue; }
-                foreach (($map[$k] ?? []) as $alt) {
-                    if (in_array($alt, $cols, true)) { $final[$alt] = $v; break; }
-                }
+                foreach (($map[$k] ?? []) as $alt) { if (in_array($alt, $cols, true)) { $final[$alt] = $v; break; } }
             }
-            // Si no hay fecha automática, agregarla si la columna existe
-            if (!isset($final['fecha_creacion']) && in_array('fecha_creacion', $cols, true)) {
-                $final['fecha_creacion'] = date('Y-m-d H:i:s');
-            }
-            if (!isset($final['created_at']) && in_array('created_at', $cols, true)) {
-                $final['created_at'] = date('Y-m-d H:i:s');
-            }
-            
+            if (!isset($final['fecha_creacion']) && in_array('fecha_creacion', $cols, true)) $final['fecha_creacion'] = date('Y-m-d H:i:s');
+            if (!isset($final['created_at']) && in_array('created_at', $cols, true)) $final['created_at'] = date('Y-m-d H:i:s');
             $campos = implode(', ', array_map(fn($k) => "`$k`", array_keys($final)));
             $marks  = implode(', ', array_map(fn($k) => ":$k", array_keys($final)));
             $st = $this->db->prepare("INSERT INTO alertas ($campos) VALUES ($marks)");
@@ -288,7 +345,9 @@ class AsistenciaController {
         } catch (\Throwable $e) { /* silencioso */ }
     }
     
-    // ============ FASE B: CUMPLIMIENTO ============
+    // =====================================================
+    // CUMPLIMIENTO (FASE B)
+    // =====================================================
     
     private function rolesReporte(): bool {
         return in_array($_SESSION['rol_nombre'] ?? '', ['SuperAdmin', 'Admin_Empresa', 'RRHH', 'Auditor', 'Contador'], true);
@@ -297,9 +356,7 @@ class AsistenciaController {
         $mes  = (int)($_GET['mes'] ?? date('n'));
         $anio = (int)($_GET['anio'] ?? date('Y'));
         $modoGlobal = (bool)($_SESSION['modo_global'] ?? false);
-        $empresa = $modoGlobal
-            ? (($_GET['empresa'] ?? '') !== '' ? (int)$_GET['empresa'] : null)
-            : (int)($_SESSION['empresa_id'] ?? 1);
+        $empresa = $modoGlobal ? (($_GET['empresa'] ?? '') !== '' ? (int)$_GET['empresa'] : null) : (int)($_SESSION['empresa_id'] ?? 1);
         return [$mes, $anio, $empresa];
     }
     public function cumplimiento() {
@@ -334,7 +391,9 @@ class AsistenciaController {
         fclose($out); exit;
     }
     
-    // ============ ROSTRO ============
+    // =====================================================
+    // ROSTRO
+    // =====================================================
     public function obtenerDescriptor() {
         header('Content-Type: application/json');
         try {
@@ -356,7 +415,9 @@ class AsistenciaController {
         return sqrt($sum);
     }
     
-    // ============ GPS ============
+    // =====================================================
+    // GPS
+    // =====================================================
     private function calcularDistancia($sede_id, $lat_empleado, $lng_empleado) {
         $sede = $this->obtenerSede($sede_id);
         if (!$sede || !$sede['lat_ref'] || !$sede['lng_ref']) return null;
