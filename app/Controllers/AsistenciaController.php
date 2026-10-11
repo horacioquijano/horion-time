@@ -1,5 +1,4 @@
 <?php
-namespace App\Controllers;<?php
 namespace App\Controllers;
 require_once __DIR__ . '/../Models/AsistenciaModel.php';
 require_once __DIR__ . '/../Helpers/Security.php';
