@@ -76,7 +76,10 @@ class KioscoController {
             elseif ($ultima === 'salida_almuerzo') $tipo = 'regreso_almuerzo';
             elseif ($ultima === 'regreso_almuerzo') $tipo = 'salida';
 
-            $estado = 'validado'; $obs = '[MARCACIÓN DESDE KIOSCO FÍSICO]';
+            // ===== AUTO-VALIDACIÓN EN KIOSCO =====
+            // El kiosco está físicamente en la sede: la presencia ya está confirmada.
+            $estado = 'validado';
+            $obs = '[MARCACIÓN DESDE KIOSCO FÍSICO] [AUTO-VALIDADO: dispositivo en sede]';
             $stT = $this->db->prepare("SELECT tc.codigo, pt.es_descanso, pt.es_vacacion, pt.nombre AS turno_nombre
                                        FROM turnos_calendario tc LEFT JOIN parametros_turnos pt ON pt.codigo = tc.codigo
                                        WHERE tc.usuario_id = ? AND tc.fecha = ? LIMIT 1");
@@ -85,11 +88,13 @@ class KioscoController {
             $nombreEmp = $usuario['nombre_completo'] ?? $ident;
 
             if ($turno && (int)$turno['es_vacacion'] === 1) {
-                $estado = 'pendiente'; $obs .= ' [VACACIONES según panel]';
+                $estado = 'pendiente'; // 🌴 excepción: no debería marcar
+                $obs .= ' [VACACIONES según panel]';
                 $this->alertarRRHH($empresa_id, 'vacacion', '🌴 Marcación en VACACIONES (kiosco)', $nombreEmp . ' marcó en el kiosco estando en vacaciones (' . date('d/m H:i') . ').', 2);
             } elseif ($turno && (int)$turno['es_descanso'] === 1) {
-                $estado = 'pendiente'; $obs .= ' [DÍA LIBRE según panel]';
-                $this->alertarRRHH($empresa_id, 'dia_libre', '😴 Marcación en día LIBRE (kiosco)', $nombreEmp . ' marcó en su día de descanso (' . date('d/m H:i') . ').', 1);
+                // 😴 Día libre trabajado: se VALIDA y queda marcado como candidato a horas extra
+                $obs .= ' [DÍA LIBRE según panel: candidato a horas extra]';
+                $this->alertarRRHH($empresa_id, 'dia_libre', '😴 Marcación en día LIBRE (kiosco)', $nombreEmp . ' marcó en su día de descanso (' . date('d/m H:i') . '). Candidato a horas extra.', 1);
             } elseif (!$turno) {
                 $obs .= ' [SIN TURNO PROGRAMADO hoy]';
             }
@@ -118,7 +123,6 @@ class KioscoController {
         exit;
     }
 
-    /** Mismo mapeo dinámico que AsistenciaController: inserta en `alertas` oficial */
     private function alertarRRHH($empresa_id, $tipo, $titulo, $mensaje, $prioridad = 2) {
         try {
             $cols = $this->db->query("SHOW COLUMNS FROM alertas")->fetchAll(\PDO::FETCH_COLUMN);
