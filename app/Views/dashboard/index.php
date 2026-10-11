@@ -11,9 +11,6 @@ $resumen_global = $resumen_global ?? ['total_empresas' => 0, 'empresas_activas' 
 $asistencia_hoy = $asistencia_hoy ?? ['entradas' => 0, 'pendientes' => 0];
 $resumen_dia = $resumen_dia ?? ['total_empleados' => 0, 'presentes' => 0, 'porcentaje_presentes' => 0, 'tardanzas' => 0, 'porcentaje_tardanzas' => 0, 'ausentes' => 0, 'porcentaje_ausentes' => 0, 'con_entrada' => 0, 'con_salida' => 0, 'sin_marcar' => 0];
 $resumen_dia_panel = $resumen_dia_panel ?? ['total_programados'=>0,'libres_hoy'=>0,'vacaciones_hoy'=>0,'a_tiempo'=>0,'tarde'=>0,'ausente'=>0,'por_marcar'=>0,'sin_turno'=>0];
-$estado_dia_detallado = is_array($estado_dia_detallado ?? null) ? $estado_dia_detallado : [];
-$conteos_estado = $conteos_estado ?? ['total'=>0,'a_tiempo'=>0,'tarde'=>0,'ausente'=>0,'por_marcar'=>0,'libre'=>0,'vacaciones'=>0,'sin_turno'=>0];
-$filtros = $filtros ?? ['estado'=>'','turno'=>''];
 
 $asistencia_por_empresa = is_array($asistencia_por_empresa ?? null) ? $asistencia_por_empresa : [];
 $tendencias_semanales = is_array($tendencias_semanales ?? null) ? $tendencias_semanales : [];
@@ -25,12 +22,10 @@ $horas_trabajadas = is_array($horas_trabajadas ?? null) ? $horas_trabajadas : []
 
 <style>
 .chart-box { position: relative; height: 280px; width: 100%; }
-.panel-card { background: linear-gradient(135deg, #ffffff, #f8fafc); border: 1px solid var(--border); border-radius: 16px; padding: 18px; transition: all .2s; position: relative; overflow: hidden; }
+.panel-card { background: linear-gradient(135deg, #ffffff, #f8fafc); border: 1px solid var(--border); border-radius: 16px; padding: 18px; position: relative; overflow: hidden; }
 .panel-card::before { content: ""; position: absolute; top: 0; left: 0; width: 5px; height: 100%; background: var(--accent, var(--primary)); }
 .panel-card .big { font-size: 2rem; font-weight: 900; line-height: 1; color: var(--accent, var(--primary)); }
 .panel-card .label { font-size: .78rem; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
-.estado-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: .78rem; font-weight: 700; }
-.letra-chip { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; font-weight: 900; color: #fff; font-size: .85rem; }
 </style>
 
 <div style="padding: 32px;">
@@ -100,12 +95,17 @@ $horas_trabajadas = is_array($horas_trabajadas ?? null) ? $horas_trabajadas : []
             </h3>
             <p style="color: var(--text-muted); margin: 2px 0 0 0;"><i class="fas fa-calendar-day"></i> Hoy - <?= date('d/m/Y') ?></p>
         </div>
-        <a class="btn btn-primary" style="text-decoration:none;" href="/horion-time/public/dashboard/exportarDiaCSV?fecha=<?= date('Y-m-d') ?>">
-            <i class="fas fa-file-csv"></i> Exportar reporte del día
-        </a>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <a class="btn" style="background:var(--bg-body);text-decoration:none;" href="/horion-time/public/asistencia/controlDia">
+                <i class="fas fa-list-check"></i> Ver detalle completo (Coordinadores)
+            </a>
+            <a class="btn btn-primary" style="text-decoration:none;" href="/horion-time/public/dashboard/exportarDiaCSV?fecha=<?= date('Y-m-d') ?>">
+                <i class="fas fa-file-csv"></i> Exportar reporte del día
+            </a>
+        </div>
     </div>
 
-    <!-- ===== FASE G: RESUMEN DEL DÍA SEGÚN PANEL DE TURNOS ===== -->
+    <!-- ===== RESUMEN DEL DÍA SEGÚN PANEL DE TURNOS (solo tarjetas) ===== -->
     <div style="margin: 20px 0 12px 0;">
         <h4 style="font-weight: 800; color: var(--text-dark); margin: 0 0 4px 0; font-size: 1rem;">
             <i class="fas fa-clipboard-check" style="color: var(--primary);"></i>
@@ -113,6 +113,7 @@ $horas_trabajadas = is_array($horas_trabajadas ?? null) ? $horas_trabajadas : []
         </h4>
         <p style="color: var(--text-muted); font-size: .82rem; margin: 0;">
             Cruza las letras programadas (C/N/D/M/L/V) con las marcaciones reales. Tolerancia: 10 min · Ausente tras 4 h desde inicio.
+            El detalle por empleado está en <b>Control del Día</b>.
         </p>
     </div>
 
@@ -144,95 +145,6 @@ $horas_trabajadas = is_array($horas_trabajadas ?? null) ? $horas_trabajadas : []
         <div class="panel-card" style="--accent:#ec4899;">
             <div class="label"><i class="fas fa-umbrella-beach"></i> Vacaciones (V)</div>
             <div class="big"><?= (int)$resumen_dia_panel['vacaciones_hoy'] ?></div>
-        </div>
-    </div>
-
-    <!-- ===== TABLA ESTADO DEL DÍA ===== -->
-    <div class="card-3d" style="padding: 18px; margin-bottom: 28px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
-            <h3 style="font-weight: 700; margin: 0;">
-                <i class="fas fa-list-check" style="color: var(--primary);"></i>
-                Detalle por empleado (<?= (int)$conteos_estado['total'] ?>)
-            </h3>
-            <form method="GET" action="/horion-time/public/dashboard" style="display:flex;gap:8px;flex-wrap:wrap;">
-                <select name="estado" class="form-input" style="width:auto;padding:7px 10px;">
-                    <option value="">Todos los estados</option>
-                    <option value="a_tiempo"   <?= $filtros['estado']==='a_tiempo' ? 'selected' : '' ?>>✅ A tiempo (<?= (int)$conteos_estado['a_tiempo'] ?>)</option>
-                    <option value="tarde"      <?= $filtros['estado']==='tarde' ? 'selected' : '' ?>>🟠 Tarde (<?= (int)$conteos_estado['tarde'] ?>)</option>
-                    <option value="por_marcar" <?= $filtros['estado']==='por_marcar' ? 'selected' : '' ?>>⏳ Por marcar (<?= (int)$conteos_estado['por_marcar'] ?>)</option>
-                    <option value="ausente"    <?= $filtros['estado']==='ausente' ? 'selected' : '' ?>>🔴 Ausente (<?= (int)$conteos_estado['ausente'] ?>)</option>
-                    <option value="libre"      <?= $filtros['estado']==='libre' ? 'selected' : '' ?>>⚪ Libre (<?= (int)$conteos_estado['libre'] ?>)</option>
-                    <option value="vacaciones" <?= $filtros['estado']==='vacaciones' ? 'selected' : '' ?>>🌴 Vacaciones (<?= (int)$conteos_estado['vacaciones'] ?>)</option>
-                </select>
-                <select name="turno" class="form-input" style="width:auto;padding:7px 10px;">
-                    <option value="">Todos los turnos</option>
-                    <option value="C" <?= $filtros['turno']==='C' ? 'selected' : '' ?>>C - Corrido</option>
-                    <option value="N" <?= $filtros['turno']==='N' ? 'selected' : '' ?>>N - Noche</option>
-                    <option value="D" <?= $filtros['turno']==='D' ? 'selected' : '' ?>>D - Día 8-5</option>
-                    <option value="M" <?= $filtros['turno']==='M' ? 'selected' : '' ?>>M - Media jornada</option>
-                    <option value="L" <?= $filtros['turno']==='L' ? 'selected' : '' ?>>L - Libre</option>
-                    <option value="V" <?= $filtros['turno']==='V' ? 'selected' : '' ?>>V - Vacaciones</option>
-                </select>
-                <button class="btn btn-primary" type="submit" style="padding:7px 14px;"><i class="fas fa-filter"></i> Filtrar</button>
-                <a class="btn" style="background:var(--bg-body);text-decoration:none;padding:7px 14px;" href="/horion-time/public/dashboard">Limpiar</a>
-            </form>
-        </div>
-
-        <div class="table-container">
-            <table class="data-table" style="font-size:.85rem;">
-                <thead>
-                    <tr>
-                        <th style="text-align:left;">Empleado</th>
-                        <th>Turno</th>
-                        <th>Horario</th>
-                        <th>Sede</th>
-                        <th>Hora entrada</th>
-                        <th>Estado</th>
-                        <th>Diferencia</th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php if (empty($estado_dia_detallado)): ?>
-                    <tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:32px;">
-                        <i class="fas fa-calendar-xmark" style="font-size:1.8rem;opacity:.4;display:block;margin-bottom:8px;"></i>
-                        No hay empleados programados para hoy en el Panel de Turnos
-                    </td></tr>
-                <?php else: foreach ($estado_dia_detallado as $f):
-                    $est = $f['estado'];
-                ?>
-                    <tr>
-                        <td style="text-align:left;">
-                            <div style="font-weight:600;"><?= htmlspecialchars($f['nombre_completo']) ?></div>
-                            <div style="font-size:.75rem;color:var(--text-muted);"><?= htmlspecialchars($f['identificacion']) ?></div>
-                        </td>
-                        <td style="text-align:center;">
-                            <?php if (!empty($f['turno_codigo'])): ?>
-                                <span class="letra-chip" style="background:<?= htmlspecialchars($f['turno_color'] ?? '#64748b') ?>;"><?= htmlspecialchars($f['turno_codigo']) ?></span>
-                                <div style="font-size:.72rem;color:var(--text-muted);margin-top:3px;"><?= htmlspecialchars(substr($f['turno_nombre'] ?? '',0,22)) ?></div>
-                            <?php else: ?><span style="color:var(--text-muted);">—</span><?php endif; ?>
-                        </td>
-                        <td style="font-family:monospace;font-weight:600;">
-                            <?php if (!empty($f['hora_entrada'])): ?>
-                                <?= substr($f['hora_entrada'],0,5) ?>–<?= substr($f['hora_salida'] ?? '',0,5) ?>
-                            <?php else: ?>—<?php endif; ?>
-                        </td>
-                        <td><?= htmlspecialchars($f['sede_nombre'] ?? '—') ?></td>
-                        <td style="font-family:monospace;font-weight:700;">
-                            <?= $f['entrada_real'] ? substr($f['entrada_real'],0,5) : '—' ?>
-                        </td>
-                        <td>
-                            <span class="estado-chip" style="background:<?= $est['color'] ?>22;color:<?= $est['color'] ?>;border:1px solid <?= $est['color'] ?>44;">
-                                <i class="fas fa-<?= $est['icon'] ?>"></i>
-                                <?= htmlspecialchars($est['label']) ?>
-                            </span>
-                        </td>
-                        <td style="font-weight:700;color:<?= $est['diff'] !== null ? ($est['diff'] > 10 ? '#dc2626' : '#03a950') : 'var(--text-muted)' ?>;">
-                            <?= $est['diff'] !== null ? ($est['diff'] > 0 ? '+' . $est['diff'] : $est['diff']) . ' min' : '—' ?>
-                        </td>
-                    </tr>
-                <?php endforeach; endif; ?>
-                </tbody>
-            </table>
         </div>
     </div>
 
