@@ -93,10 +93,9 @@ class HorarioController {
     }
 
     // ==========================================================
-    //  SINCRONIZACIÓN AUTOMÁTICA PANEL → HORARIOS SEMANALES
+    //  SINCRONIZACIÓN PANEL → HORARIOS SEMANALES (v2 con turnos garantizados)
     // ==========================================================
 
-    /** Ruta del botón 🔄 */
     public function sincronizarHorarios() {
         if (!$this->requiereGestion()) { header('Location: /horion-time/public/horarios'); exit; }
         $mes  = (int)($_GET['mes']  ?? date('n'));
@@ -104,7 +103,7 @@ class HorarioController {
         try {
             $res = $this->doSincronizar($this->empresaActual(), $mes, $anio);
             $msg = 'Sincronización completa: ' . $res['asignados'] . ' asignados (' .
-                   $res['fijos_creados'] . ' horarios fijos creados, ' . $res['fijos_reusados'] .
+                   $res['fijos_creados'] . ' fijos creados, ' . $res['fijos_reusados'] .
                    ' reutilizados, ' . $res['rotativos'] . ' rotativos).';
             header('Location: /horion-time/public/horarios?success=1&msg=' . urlencode($msg)); exit;
         } catch (\Throwable $e) {
@@ -112,11 +111,36 @@ class HorarioController {
         }
     }
 
-    /** Motor: detecta fijos vs rotativos y crea/reutiliza/asigna horarios */
+    /** Inserta/refresca los turnos semanales de un horario AUTO directamente en `turnos` */
+    private function refrescarTurnosAuto($horario_id, array $modoPorDia, array $metaPorDia) {
+        $cols = $this->db->query("SHOW COLUMNS FROM turnos")->fetchAll(\PDO::FETCH_COLUMN);
+        $this->db->prepare("DELETE FROM turnos WHERE horario_id = ?")->execute([(int)$horario_id]);
+        for ($w = 0; $w <= 6; $w++) {
+            $cod = $modoPorDia[$w] ?? null;
+            if ($cod === null) continue;
+            $meta = $metaPorDia[$w] ?? null;
+            $esDesc = $meta ? (int)($meta['es_descanso'] ?? 0) : 0;
+            $fila = [
+                'horario_id'   => (int)$horario_id,
+                'dia_semana'   => $w,
+                'hora_entrada' => $esDesc ? null : ($meta['hora_entrada'] ?? null),
+                'hora_salida'  => $esDesc ? null : ($meta['hora_salida'] ?? null),
+                'es_descanso'  => $esDesc,
+                'tolerancia_entrada_min' => 10,
+                'tolerancia_salida_min'  => 10,
+            ];
+            $use = array_intersect_key($fila, array_flip($cols));
+            $campos = implode(', ', array_map(fn($k) => "`$k`", array_keys($use)));
+            $marks  = implode(', ', array_map(fn($k) => ":$k", array_keys($use)));
+            $st = $this->db->prepare("INSERT INTO turnos ($campos) VALUES ($marks)");
+            foreach ($use as $k => $v) $st->bindValue(":$k", $v);
+            $st->execute();
+        }
+    }
+
     private function doSincronizar($empresa_id, $mes, $anio) {
         $res = ['fijos_creados'=>0,'fijos_reusados'=>0,'rotativos'=>0,'asignados'=>0,'omitidos'=>0];
 
-        // 1) Calendario del mes con horas de la leyenda
         $st = $this->db->prepare("SELECT tc.usuario_id, tc.fecha, tc.codigo,
                                          pt.hora_entrada, pt.hora_salida, pt.horas_trabajadas,
                                          pt.es_descanso, pt.es_vacacion
@@ -130,7 +154,6 @@ class HorarioController {
         }
         if (!$porUsuario) return $res;
 
-        // 2) Horarios actuales por empleado (para no re-asignar el mismo)
         $horarioActual = [];
         foreach ($this->model->getEmpleadosConHorario($empresa_id) as $e) {
             $horarioActual[(int)$e['id']] = $e['horario_nombre'] ?? null;
@@ -139,21 +162,19 @@ class HorarioController {
         $primerDia = sprintf('%04d-%02d-01', $anio, $mes);
         $ultimoDia = date('Y-m-t', strtotime($primerDia));
         $rotativoId = null;
+        $rotativoNombre = 'Rotativo — ver Panel de Turnos';
 
         foreach ($porUsuario as $uid => $filas) {
-            // Ignora empleados sin días laborables (solo V/L)
             $laborales = array_filter($filas, fn($f) => (int)($f['es_vacacion'] ?? 0) === 0 && (int)($f['es_descanso'] ?? 0) === 0);
             if (count($laborales) === 0) { $res['omitidos']++; continue; }
 
-            // 3) Agrupa por día de semana (0=dom … 6=sáb)
             $porDia = [];
             foreach ($filas as $f) {
-                if ((int)($f['es_vacacion'] ?? 0) === 1) continue; // vacaciones = excepción
+                if ((int)($f['es_vacacion'] ?? 0) === 1) continue;
                 $w = (int)date('w', strtotime($f['fecha']));
                 $porDia[$w][] = $f;
             }
 
-            // 4) ¿FIJO? regla de mayoría ≥75% por día de semana
             $esFijo = true;
             $modoPorDia = [];
             $metaPorDia = [];
@@ -164,14 +185,12 @@ class HorarioController {
                 foreach ($lista as $f) $conteo[$f['codigo']] = ($conteo[$f['codigo']] ?? 0) + 1;
                 arsort($conteo);
                 $modo = array_key_first($conteo);
-                $ratio = $conteo[$modo] / count($lista);
-                if ($ratio < 0.75) { $esFijo = false; }
+                if ($conteo[$modo] / count($lista) < 0.75) $esFijo = false;
                 $modoPorDia[$w] = $modo;
                 $metaPorDia[$w] = $lista[0];
             }
 
             if ($esFijo) {
-                // 5) Firma del patrón → reutilizar horario existente
                 $sig = implode(',', array_map(fn($w) => $modoPorDia[$w] ?? '-', range(0, 6)));
                 $firma = '[FIRMA:' . $sig . ']';
                 $q = $this->db->prepare("SELECT id, nombre FROM horarios WHERE empresa_id = ? AND descripcion = ? LIMIT 1");
@@ -180,24 +199,11 @@ class HorarioController {
 
                 if (!$hor) {
                     $horasSem = 0.0;
-                    $turnos = [];
                     for ($w = 0; $w <= 6; $w++) {
                         $cod = $modoPorDia[$w];
                         if ($cod === null) continue;
                         $meta = $metaPorDia[$w] ?? null;
-                        $esDesc = $meta ? (int)($meta['es_descanso'] ?? 0) : 0;
-                        if ($esDesc === 1) {
-                            $turnos[$w] = ['hora_entrada'=>null,'hora_salida'=>null,'es_descanso'=>1,'tolerancia_entrada_min'=>10,'tolerancia_salida_min'=>10];
-                        } else {
-                            $horasSem += (float)($meta['horas_trabajadas'] ?? 0);
-                            $turnos[$w] = [
-                                'hora_entrada' => $meta['hora_entrada'] ?? null,
-                                'hora_salida'  => $meta['hora_salida'] ?? null,
-                                'es_descanso'  => 0,
-                                'tolerancia_entrada_min' => 10,
-                                'tolerancia_salida_min' => 10,
-                            ];
-                        }
+                        if ($meta && (int)($meta['es_descanso'] ?? 0) === 0) $horasSem += (float)($meta['horas_trabajadas'] ?? 0);
                     }
                     $letras = implode('-', array_values(array_unique(array_filter($modoPorDia, fn($c) => $c !== null))));
                     $hid = $this->model->crearHorario([
@@ -206,15 +212,15 @@ class HorarioController {
                         'descripcion' => $firma,
                         'horas_semanales' => $horasSem,
                     ]);
-                    $this->model->crearTurnos($hid, $turnos);
                     $hor = ['id' => $hid, 'nombre' => 'Auto Fijo ' . $letras];
                     $res['fijos_creados']++;
                 } else {
                     $res['fijos_reusados']++;
                 }
+                // SIEMPRE garantiza/refresca los turnos semanales del horario auto
+                $this->refrescarTurnosAuto((int)$hor['id'], $modoPorDia, $metaPorDia);
                 $objetivo = $hor;
             } else {
-                // 6) ROTATIVO → horario marcador compartido
                 if ($rotativoId === null) {
                     $q = $this->db->prepare("SELECT id, nombre FROM horarios WHERE empresa_id = ? AND descripcion = '[FIRMA:ROTATIVO]' LIMIT 1");
                     $q->execute([(int)$empresa_id]);
@@ -222,25 +228,18 @@ class HorarioController {
                     if (!$hor) {
                         $hid = $this->model->crearHorario([
                             'empresa_id' => (int)$empresa_id,
-                            'nombre' => 'Rotativo — ver Panel de Turnos',
+                            'nombre' => $rotativoNombre,
                             'descripcion' => '[FIRMA:ROTATIVO]',
                             'horas_semanales' => 44,
                         ]);
-                        $turnos = [];
-                        for ($w = 0; $w <= 6; $w++) {
-                            $turnos[$w] = ['hora_entrada'=>null,'hora_salida'=>null,'es_descanso'=>0,'tolerancia_entrada_min'=>10,'tolerancia_salida_min'=>10];
-                        }
-                        $this->model->crearTurnos($hid, $turnos);
-                        $hor = ['id' => $hid, 'nombre' => 'Rotativo — ver Panel de Turnos'];
+                        $hor = ['id' => $hid, 'nombre' => $rotativoNombre];
                     }
                     $rotativoId = (int)$hor['id'];
-                    $this->rotativoNombre = $hor['nombre'];
                 }
-                $objetivo = ['id' => $rotativoId, 'nombre' => $this->rotativoNombre ?? 'Rotativo — ver Panel de Turnos'];
+                $objetivo = ['id' => $rotativoId, 'nombre' => $rotativoNombre];
                 $res['rotativos']++;
             }
 
-            // 7) Asignar solo si cambió
             if (($horarioActual[$uid] ?? null) !== $objetivo['nombre']) {
                 $this->model->asignarHorario($uid, (int)$objetivo['id'], $primerDia, $ultimoDia);
                 $res['asignados']++;
@@ -302,14 +301,13 @@ class HorarioController {
             if ($tmpFile !== '' && is_file($tmpFile)) @unlink($tmpFile);
             unset($_SESSION['carga_preview'], $_SESSION['carga_tmp'], $_SESSION['carga_meta']);
 
-            // ===== NUEVO: sincroniza horarios semanales automáticamente =====
             $syncMsg = '';
             try {
                 $sync = $this->doSincronizar($empresa_id, (int)$meta['mes'], (int)$meta['anio']);
                 $syncMsg = ' · Horarios sincronizados: ' . $sync['asignados'] . ' asignados (' .
                            $sync['fijos_creados'] . ' fijos nuevos, ' . $sync['fijos_reusados'] . ' reutilizados, ' .
                            $sync['rotativos'] . ' rotativos).';
-            } catch (\Throwable $e) { $syncMsg = ' · (sincronización de horarios omitida: ' . $e->getMessage() . ')'; }
+            } catch (\Throwable $e) { $syncMsg = ' · (sincronización omitida: ' . $e->getMessage() . ')'; }
 
             header('Location: /horion-time/public/horarios/panelTurnos?tab=historial&msg=' .
                 urlencode('Carga aplicada: ' . $res['ok'] . ' empleados OK, ' . $res['err'] . ' con observaciones' . $syncMsg)); exit;
