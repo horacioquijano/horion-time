@@ -273,7 +273,13 @@ function verDetalleHorario(id) {
     const turnos = window.turnosPorHorario[id] || [];
     let html = '';
     if (turnos.length === 0) {
-        html = '<div style="text-align:center; padding: 30px; color: var(--text-muted);"><i class="fas fa-calendar-times" style="font-size: 2rem; margin-bottom: 10px;"></i><p>Este horario aún no tiene turnos configurados.</p></div>';
+        html = '<div style="text-align:center; padding: 30px; color: var(--text-muted);">' +
+               '<i class="fas fa-calendar-times" style="font-size: 2rem; margin-bottom: 10px;"></i>' +
+               '<p style="font-weight:700;margin-bottom:6px;">Este horario no tiene turnos semanales fijos.</p>' +
+               '<p style="font-size:.85rem;">Los horarios <b>Auto Fijo</b> y <b>Rotativo</b> se administran día a día desde el <b>Panel de Turnos</b> (letras C/N/D/M/L/V).</p>' +
+               '<a href="/horion-time/public/horarios/panelTurnos" class="btn btn-primary" style="margin-top:16px;text-decoration:none;display:inline-flex;align-items:center;gap:8px;">' +
+               '<i class="fas fa-calendar-week"></i> Ir al Panel de Turnos</a>' +
+               '</div>';
     } else {
         html = '<table class="tabla-turnos"><thead><tr><th>Día</th><th>Entrada</th><th>Salida</th><th>Estado</th></tr></thead><tbody>';
         turnos.forEach(t => {
