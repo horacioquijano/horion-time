@@ -284,8 +284,12 @@ function verDetalleHorario(id) {
         html = '<table class="tabla-turnos"><thead><tr><th>Día</th><th>Entrada</th><th>Salida</th><th>Estado</th></tr></thead><tbody>';
         turnos.forEach(t => {
             const dia = window.nombresDias[parseInt(t.dia_semana)] || ('Día ' + t.dia_semana);
-            const estado = parseInt(t.es_descanso) === 1 ? '<span class="badge-descanso">Descanso</span>' : '<span class="badge badge-success">Laboral</span>';
-            html += `<tr><td><strong>${dia}</strong></td><td>${t.hora_entrada || '—'}</td><td>${t.hora_salida || '—'}</td><td>${estado}</td></tr>`;
+            const esDesc = parseInt(t.es_descanso) === 1;
+            const esCero = (h) => (!h || String(h).indexOf('00:00:00') === 0);
+            const ent = (esDesc || esCero(t.hora_entrada)) ? '—' : String(t.hora_entrada).substring(0,5);
+            const sal = (esDesc || esCero(t.hora_salida)) ? '—' : String(t.hora_salida).substring(0,5);
+            const estado = esDesc ? '<span class="badge-descanso">Descanso</span>' : '<span class="badge badge-success">Laboral</span>';
+            html += `<tr><td><strong>${dia}</strong></td><td>${ent}</td><td>${sal}</td><td>${estado}</td></tr>`;
         });
         html += '</tbody></table>';
     }
