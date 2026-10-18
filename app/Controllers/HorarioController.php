@@ -102,7 +102,7 @@ class HorarioController {
     }
 
     // ==========================================================
-    //  SINCRONIZACIÓN v3: AUTO-VERIFICABLE, SIN FALLOS SILENCIOSOS
+    //  SINCRONIZACIÓN v4: respeta NOT NULL de turnos (hora_entrada + nombre)
     // ==========================================================
 
     public function sincronizarHorarios() {
@@ -122,17 +122,17 @@ class HorarioController {
         $msg = 'Sincronización: ' . $res['procesados'] . ' procesados, ' . $res['asignados'] . ' asignados, ' .
                $res['fijos_creados'] . ' horarios fijos creados, ' . $res['rotativos'] . ' rotativos, ' .
                $res['turnos_insertados'] . ' turnos semanales insertados.';
-        if ($res['verif']) {
-            $msg .= ' Verificación: ' . implode(' · ', $res['verif']);
-        }
-        if ($res['errores']) {
-            $msg .= ' ⚠️ Errores (' . count($res['errores']) . '): ' . implode(' | ', array_slice($res['errores'], 0, 3));
-        }
+        if ($res['verif']) $msg .= ' Verificación: ' . implode(' · ', $res['verif']);
+        if ($res['errores']) $msg .= ' ⚠️ Errores (' . count($res['errores']) . '): ' . implode(' | ', array_slice($res['errores'], 0, 3));
         return $msg;
     }
 
-    /** Inserta los 7 días (incluye descansos) fila por fila, sin abortar */
-    private function refrescarTurnosAuto($horario_id, array $modoPorDia, array $metaPorDia, array &$errores): int {
+    /**
+     * Inserta los 7 días respetando restricciones NOT NULL de `turnos`:
+     * - Descansos: hora_entrada/hora_salida = '00:00:00' + es_descanso=1 + nombre='Descanso'
+     * - Laborales: horas reales de la Leyenda + nombre del turno (ej: 'Día (8am-5pm)')
+     */
+    private function refrescarTurnosAuto($horario_id, array $modoPorDia, array $metaPorDia, int $empresa_id, array &$errores): int {
         $insertados = 0;
         try {
             if (!in_array('turnos', $this->tablas(), true)) { $errores[] = 'Tabla turnos no existe'; return 0; }
@@ -146,12 +146,17 @@ class HorarioController {
                 $fila = [
                     'horario_id'   => (int)$horario_id,
                     'dia_semana'   => $w,
-                    'hora_entrada' => $esDesc ? null : ($meta['hora_entrada'] ?? null),
-                    'hora_salida'  => $esDesc ? null : ($meta['hora_salida'] ?? null),
+                    'hora_entrada' => $esDesc ? '00:00:00' : (string)($meta['hora_entrada'] ?? '00:00:00'),
+                    'hora_salida'  => $esDesc ? '00:00:00' : (string)($meta['hora_salida'] ?? '00:00:00'),
                     'es_descanso'  => $esDesc,
                     'tolerancia_entrada_min' => 10,
                     'tolerancia_salida_min'  => 10,
                 ];
+                if (in_array('nombre', $cols, true)) {
+                    $fila['nombre'] = $esDesc ? 'Descanso' : trim((string)($meta['turno_nombre'] ?? $cod));
+                }
+                if (in_array('empresa_id', $cols, true)) $fila['empresa_id'] = $empresa_id;
+                if (in_array('estado', $cols, true))     $fila['estado'] = 'activo';
                 $use = array_intersect_key($fila, array_flip($cols));
                 try {
                     $campos = implode(', ', array_map(fn($k) => "`$k`", array_keys($use)));
@@ -170,7 +175,6 @@ class HorarioController {
         return $insertados;
     }
 
-    /** Asignación doble camino con errores visibles por empleado */
     private function asignarSemana($uid, $hid, $fi, $ff, array &$errores): bool {
         $ok = false;
         if (in_array('empleado_horario', $this->tablas(), true)) {
@@ -205,7 +209,7 @@ class HorarioController {
 
         $st = $this->db->prepare("SELECT tc.usuario_id, tc.fecha, tc.codigo,
                                          pt.hora_entrada, pt.hora_salida, pt.horas_trabajadas,
-                                         pt.es_descanso, pt.es_vacacion
+                                         pt.es_descanso, pt.es_vacacion, pt.nombre AS turno_nombre
                                   FROM turnos_calendario tc
                                   LEFT JOIN parametros_turnos pt ON pt.codigo = tc.codigo
                                   WHERE tc.empresa_id = ? AND YEAR(tc.fecha) = ? AND MONTH(tc.fecha) = ?");
@@ -280,7 +284,7 @@ class HorarioController {
                     } else {
                         $res['fijos_reusados']++;
                     }
-                    $res['turnos_insertados'] += $this->refrescarTurnosAuto((int)$hor['id'], $modoPorDia, $metaPorDia, $res['errores']);
+                    $res['turnos_insertados'] += $this->refrescarTurnosAuto((int)$hor['id'], $modoPorDia, $metaPorDia, (int)$empresa_id, $res['errores']);
                     $autosIds[(int)$hor['id']] = $hor['nombre'];
                     $objetivo = $hor;
                 } else {
@@ -313,7 +317,6 @@ class HorarioController {
             }
         }
 
-        // Verificación final: turnos por horario auto
         foreach ($autosIds as $hid => $nombre) {
             $q = $this->db->prepare("SELECT COUNT(*) FROM turnos WHERE horario_id = ?");
             $q->execute([(int)$hid]);
