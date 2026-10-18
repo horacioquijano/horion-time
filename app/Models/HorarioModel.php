@@ -16,6 +16,12 @@ class HorarioModel {
         } catch (\Throwable $e) { return []; }
     }
 
+    private function columnasInfo(string $tabla): array {
+        try {
+            return $this->db->query("SHOW COLUMNS FROM `$tabla`")->fetchAll(PDO::FETCH_ASSOC);
+        } catch (\Throwable $e) { return []; }
+    }
+
     private function tablaExiste(string $tabla): bool {
         try {
             $st = $this->db->prepare("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?");
@@ -27,6 +33,43 @@ class HorarioModel {
     private function pick(array $cols, array $candidatas): ?string {
         foreach ($candidatas as $c) if (in_array($c, $cols, true)) return $c;
         return null;
+    }
+
+    private function valorSeguro(string $type) {
+        $type = strtolower($type);
+        if (strpos($type, 'enum') === 0 && preg_match("/^enum\((.*)\)$/s", $type, $m)) {
+            $opts = str_getcsv($m[1], "'", "\\");
+            return (string)($opts[0] ?? '');
+        }
+        if (strpos($type, 'time') !== false) return '00:00:00';
+        if (strpos($type, 'date') !== false) return date('Y-m-d');
+        if (preg_match('/(int|decimal|float|double|bit)/', $type)) return 0;
+        return '';
+    }
+
+    /** Fila completa: alias conocidos + relleno de NOT NULL sin default */
+    private function filaCompleta(array $colsInfo, array $base): array {
+        $fila = [];
+        foreach ($colsInfo as $ci) {
+            $field = $ci['Field'];
+            $type  = strtolower((string)$ci['Type']);
+            $null  = strtoupper((string)$ci['Null']) === 'YES';
+            $extra = strtolower((string)$ci['Extra']);
+            if (strpos($extra, 'auto_increment') !== false) continue;
+            if (array_key_exists($field, $base)) {
+                $val = $base[$field];
+                if (strpos($type, 'enum') === 0 && preg_match("/^enum\((.*)\)$/s", $type, $m)) {
+                    $opts = str_getcsv($m[1], "'", "\\");
+                    if (!in_array((string)$val, $opts, true)) $val = $opts[0] ?? '';
+                }
+                $fila[$field] = $val;
+                continue;
+            }
+            if (!$null && $ci['Default'] === null) {
+                $fila[$field] = $this->valorSeguro($type);
+            }
+        }
+        return $fila;
     }
 
     // ========== Lecturas ==========
@@ -53,7 +96,6 @@ class HorarioModel {
         return $st->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    /** Horario vigente de un empleado (empleado_horario con fechas; fallback legacy) */
     public function getHorarioEmpleado($usuario_id, $fecha = null) {
         $fecha = $fecha ?? date('Y-m-d');
         if ($this->tablaExiste('empleado_horario')) {
@@ -69,7 +111,6 @@ class HorarioModel {
             $row = $st->fetch(PDO::FETCH_ASSOC);
             if ($row) return $row;
         }
-        // Fallback legacy: usuarios.horario_asignado_id
         try {
             $st = $this->db->prepare("
                 SELECT h.* FROM usuarios u
@@ -80,11 +121,10 @@ class HorarioModel {
         } catch (\Throwable $e) { return null; }
     }
 
-    /** Turno del empleado para un día: real (turnos) o virtual (bandas del horario) */
     public function getTurnoEmpleadoDia($usuario_id, $fecha) {
         $h = $this->getHorarioEmpleado($usuario_id, $fecha);
         if (!$h) return null;
-        $dow = (int)date('w', strtotime($fecha)); // 0=Dom ... 6=Sáb
+        $dow = (int)date('w', strtotime($fecha));
 
         if ($this->tablaExiste('turnos')) {
             $cols = $this->columnas('turnos');
@@ -108,7 +148,6 @@ class HorarioModel {
                 }
             }
         }
-        // Turno virtual con las bandas del horario (legacy)
         return [
             'hora_entrada' => $h['jornada_diurna_inicio'] ?? '06:00:00',
             'hora_salida'  => $h['jornada_diurna_fin'] ?? '22:00:00',
@@ -144,15 +183,9 @@ class HorarioModel {
     // ========== Escrituras ==========
     public function crearHorario($data) {
         $cols = $this->columnas('horarios');
-        
-        // GARANTIZAR nombre (campo obligatorio)
         $nombre = trim($data['nombre'] ?? '');
-        if ($nombre === '') {
-            $nombre = 'Horario ' . date('Y-m-d H:i');
-        }
-        
+        if ($nombre === '') $nombre = 'Horario ' . date('Y-m-d H:i');
         $fila = ['nombre' => $nombre];
-        
         $map = [
             'empresa_id'              => (int)($data['empresa_id'] ?? $_SESSION['empresa_id'] ?? 1),
             'descripcion'             => trim($data['descripcion'] ?? ''),
@@ -168,13 +201,11 @@ class HorarioModel {
             'descanso_almuerzo_fin'   => $data['descanso_almuerzo_fin'] ?? '13:00:00',
             'estado'                  => 'activo',
         ];
-        
         foreach ($map as $k => $v) {
             if (!in_array($k, $cols, true)) continue;
             if ($v === '' || $v === null) continue;
             $fila[$k] = $v;
         }
-        
         $campos = implode(', ', array_map(fn($k) => "`$k`", array_keys($fila)));
         $marks  = implode(', ', array_map(fn($k) => ":$k", array_keys($fila)));
         $st = $this->db->prepare("INSERT INTO horarios ($campos) VALUES ($marks)");
@@ -183,40 +214,45 @@ class HorarioModel {
         return (int)$this->db->lastInsertId();
     }
 
+    /** CREAR TURNOS v2: respeta cualquier esquema NOT NULL de `turnos` */
     public function crearTurnos($horario_id, $turnos) {
         if (!$this->tablaExiste('turnos')) return 0;
-        $cols = $this->columnas('turnos');
-        $colH   = $this->pick($cols, ['horario_id']);
-        $colDia = $this->pick($cols, ['dia_semana', 'dia', 'dia_id']);
-        $colEnt = $this->pick($cols, ['hora_entrada', 'hora_inicio', 'entrada']);
-        $colSal = $this->pick($cols, ['hora_salida', 'hora_fin', 'salida']);
-        if (!$colH || !$colDia || !$colEnt || !$colSal) return 0;
-
+        $colsInfo = $this->columnasInfo('turnos');
+        if (!$colsInfo) return 0;
         $insertados = 0;
         foreach ($turnos as $dia => $t) {
-            if (empty($t['hora_entrada']) || empty($t['hora_salida'])) continue;
-            $fila = [
-                $colH   => (int)$horario_id,
-                $colDia => (int)$dia,
-                $colEnt => $t['hora_entrada'],
-                $colSal => $t['hora_salida'],
+            $esDesc = (int)($t['es_descanso'] ?? 0);
+            $ent = $esDesc ? '00:00:00' : (string)($t['hora_entrada'] ?? '');
+            $sal = $esDesc ? '00:00:00' : (string)($t['hora_salida'] ?? '');
+            if (!$esDesc && ($ent === '' || $sal === '')) continue;
+            $base = [
+                'horario_id'   => (int)$horario_id,
+                'dia_semana'   => (int)$dia, 'dia' => (int)$dia, 'dia_id' => (int)$dia,
+                'nombre'       => (string)($t['nombre'] ?? ($esDesc ? 'Descanso' : 'Turno')),
+                'hora_entrada' => $ent, 'hora_salida' => $sal,
+                'hora_inicio'  => $ent, 'hora_fin'    => $sal,
+                'entrada'      => $ent, 'salida'      => $sal,
+                'es_descanso'  => $esDesc, 'descanso' => $esDesc,
+                'tolerancia_entrada_min' => (int)($t['tolerancia_entrada_min'] ?? 10),
+                'tolerancia_salida_min'  => (int)($t['tolerancia_salida_min'] ?? 10),
+                'tolerancia_entrada'     => (int)($t['tolerancia_entrada_min'] ?? 10),
+                'tolerancia_salida'      => (int)($t['tolerancia_salida_min'] ?? 10),
+                'empresa_id'   => (int)($t['empresa_id'] ?? $_SESSION['empresa_id'] ?? 1),
+                'estado'       => 'activo',
             ];
-            if ($c = $this->pick($cols, ['es_descanso', 'descanso']))              $fila[$c] = (int)($t['es_descanso'] ?? 0);
-            if ($c = $this->pick($cols, ['tolerancia_entrada_min', 'tolerancia_entrada'])) $fila[$c] = (int)($t['tolerancia_entrada_min'] ?? 10);
-            if ($c = $this->pick($cols, ['tolerancia_salida_min', 'tolerancia_salida']))   $fila[$c] = (int)($t['tolerancia_salida_min'] ?? 10);
-            if ($c = $this->pick($cols, ['empresa_id']))                          $fila[$c] = (int)($t['empresa_id'] ?? 1);
-
-            $campos = implode(', ', array_map(fn($k) => "`$k`", array_keys($fila)));
-            $marks  = implode(', ', array_map(fn($k) => ":$k", array_keys($fila)));
-            $st = $this->db->prepare("INSERT INTO turnos ($campos) VALUES ($marks)");
-            foreach ($fila as $k => $v) $st->bindValue(":$k", $v);
-            $st->execute();
-            $insertados++;
+            $fila = $this->filaCompleta($colsInfo, $base);
+            try {
+                $campos = implode(', ', array_map(fn($k) => "`$k`", array_keys($fila)));
+                $marks  = implode(', ', array_map(fn($k) => ":$k", array_keys($fila)));
+                $st = $this->db->prepare("INSERT INTO turnos ($campos) VALUES ($marks)");
+                foreach ($fila as $k => $v) $st->bindValue(":$k", $v);
+                $st->execute();
+                $insertados++;
+            } catch (\Throwable $e) { /* un día fallando no tumba el resto */ }
         }
         return $insertados;
     }
 
-    /** Asigna horario con vigencia Y sincroniza el campo legacy del dashboard */
     public function asignarHorario($usuario_id, $horario_id, $fecha_inicio, $fecha_fin = null) {
         if ($this->tablaExiste('empleado_horario')) {
             $this->db->prepare("UPDATE empleado_horario SET estado = 'inactivo' WHERE usuario_id = ? AND estado = 'activo'")
@@ -231,7 +267,6 @@ class HorarioModel {
             foreach ($fila as $k => $v) $st->bindValue(":$k", $v);
             $st->execute();
         }
-        // Sincroniza legacy: el dashboard lee usuarios.horario_asignado_id
         try {
             $this->db->prepare("UPDATE usuarios SET horario_asignado_id = ? WHERE id = ?")
                      ->execute([(int)$horario_id, (int)$usuario_id]);
