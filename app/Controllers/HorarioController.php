@@ -102,7 +102,7 @@ class HorarioController {
     }
 
     // ==========================================================
-    //  SINCRONIZACIÓN v4: respeta NOT NULL de turnos (hora_entrada + nombre)
+    //  SINCRONIZACIÓN v5: relleno automático de TODO NOT NULL sin default
     // ==========================================================
 
     public function sincronizarHorarios() {
@@ -127,42 +127,84 @@ class HorarioController {
         return $msg;
     }
 
+    /** Valor seguro según tipo de columna (para NOT NULL sin default) */
+    private function valorSeguro(string $type): string|int {
+        $type = strtolower($type);
+        if (strpos($type, 'enum') === 0 && preg_match("/^enum\((.*)\)$/s", $type, $m)) {
+            $opts = str_getcsv($m[1], "'", "\\");
+            return (string)($opts[0] ?? '');
+        }
+        if (strpos($type, 'time') !== false) return '00:00:00';
+        if (strpos($type, 'date') !== false) return date('Y-m-d');
+        if (preg_match('/(int|decimal|float|double|bit)/', $type)) return 0;
+        return '';
+    }
+
     /**
-     * Inserta los 7 días respetando restricciones NOT NULL de `turnos`:
-     * - Descansos: hora_entrada/hora_salida = '00:00:00' + es_descanso=1 + nombre='Descanso'
-     * - Laborales: horas reales de la Leyenda + nombre del turno (ej: 'Día (8am-5pm)')
+     * Construye la fila completa para `turnos`: alias conocidos + relleno
+     * automático de cualquier columna NOT NULL sin default que exista en TU esquema.
      */
+    private function filaTurnoCompleta(array $colsInfo, array $base): array {
+        $fila = [];
+        foreach ($colsInfo as $ci) {
+            $field = $ci['Field'];
+            $type  = strtolower((string)$ci['Type']);
+            $null  = strtoupper((string)$ci['Null']) === 'YES';
+            $extra = strtolower((string)$ci['Extra']);
+            if (strpos($extra, 'auto_increment') !== false) continue;
+
+            if (array_key_exists($field, $base)) {
+                $val = $base[$field];
+                // Si es enum y el valor base no está permitido, usa el primero
+                if (strpos($type, 'enum') === 0 && preg_match("/^enum\((.*)\)$/s", $type, $m)) {
+                    $opts = str_getcsv($m[1], "'", "\\");
+                    if (!in_array((string)$val, $opts, true)) $val = $opts[0] ?? '';
+                }
+                $fila[$field] = $val;
+                continue;
+            }
+            if (!$null && $ci['Default'] === null) {
+                $fila[$field] = $this->valorSeguro($type);
+            }
+        }
+        return $fila;
+    }
+
     private function refrescarTurnosAuto($horario_id, array $modoPorDia, array $metaPorDia, int $empresa_id, array &$errores): int {
         $insertados = 0;
         try {
             if (!in_array('turnos', $this->tablas(), true)) { $errores[] = 'Tabla turnos no existe'; return 0; }
-            $cols = $this->db->query("SHOW COLUMNS FROM turnos")->fetchAll(\PDO::FETCH_COLUMN);
+            $colsInfo = $this->db->query("SHOW COLUMNS FROM turnos")->fetchAll(\PDO::FETCH_ASSOC);
             $this->db->prepare("DELETE FROM turnos WHERE horario_id = ?")->execute([(int)$horario_id]);
             for ($w = 0; $w <= 6; $w++) {
                 $cod = $modoPorDia[$w] ?? null;
                 if ($cod === null) continue;
                 $meta = $metaPorDia[$w] ?? null;
                 $esDesc = $meta ? (int)($meta['es_descanso'] ?? 0) : 0;
-                $fila = [
+                $ent = $esDesc ? '00:00:00' : (string)($meta['hora_entrada'] ?? '00:00:00');
+                $sal = $esDesc ? '00:00:00' : (string)($meta['hora_salida'] ?? '00:00:00');
+                $nombreTurno = $esDesc ? 'Descanso' : trim((string)($meta['turno_nombre'] ?? $cod));
+
+                $base = [
                     'horario_id'   => (int)$horario_id,
-                    'dia_semana'   => $w,
-                    'hora_entrada' => $esDesc ? '00:00:00' : (string)($meta['hora_entrada'] ?? '00:00:00'),
-                    'hora_salida'  => $esDesc ? '00:00:00' : (string)($meta['hora_salida'] ?? '00:00:00'),
-                    'es_descanso'  => $esDesc,
-                    'tolerancia_entrada_min' => 10,
-                    'tolerancia_salida_min'  => 10,
+                    'dia_semana'   => $w, 'dia' => $w, 'dia_id' => $w,
+                    'nombre'       => $nombreTurno,
+                    'hora_entrada' => $ent, 'hora_salida' => $sal,
+                    'hora_inicio'  => $ent, 'hora_fin'    => $sal,
+                    'entrada'      => $ent, 'salida'      => $sal,
+                    'es_descanso'  => $esDesc, 'descanso' => $esDesc,
+                    'tolerancia_entrada_min' => 10, 'tolerancia_salida_min' => 10,
+                    'tolerancia_entrada'     => 10, 'tolerancia_salida'     => 10,
+                    'empresa_id'   => $empresa_id,
+                    'estado'       => 'activo',
                 ];
-                if (in_array('nombre', $cols, true)) {
-                    $fila['nombre'] = $esDesc ? 'Descanso' : trim((string)($meta['turno_nombre'] ?? $cod));
-                }
-                if (in_array('empresa_id', $cols, true)) $fila['empresa_id'] = $empresa_id;
-                if (in_array('estado', $cols, true))     $fila['estado'] = 'activo';
-                $use = array_intersect_key($fila, array_flip($cols));
+
+                $fila = $this->filaTurnoCompleta($colsInfo, $base);
                 try {
-                    $campos = implode(', ', array_map(fn($k) => "`$k`", array_keys($use)));
-                    $marks  = implode(', ', array_map(fn($k) => ":$k", array_keys($use)));
+                    $campos = implode(', ', array_map(fn($k) => "`$k`", array_keys($fila)));
+                    $marks  = implode(', ', array_map(fn($k) => ":$k", array_keys($fila)));
                     $st = $this->db->prepare("INSERT INTO turnos ($campos) VALUES ($marks)");
-                    foreach ($use as $k => $v) $st->bindValue(":$k", $v);
+                    foreach ($fila as $k => $v) $st->bindValue(":$k", $v);
                     $st->execute();
                     $insertados++;
                 } catch (\Throwable $e) {
