@@ -41,6 +41,23 @@ class KioscoController {
         exit;
     }
 
+    /** PÚBLICO (con token): devuelve el descriptor facial enrolado de una cédula */
+    public function obtenerDescriptorEmpleado() {
+        header('Content-Type: application/json');
+        try {
+            $data = json_decode(file_get_contents('php://input'), true) ?? [];
+            $dispositivo = $this->dispositivoModel->getByToken((string)($data['token'] ?? ''));
+            if (!$dispositivo) { echo json_encode(['descriptor' => null]); exit; }
+            $ident = trim((string)($data['identificacion'] ?? ''));
+            if ($ident === '') { echo json_encode(['descriptor' => null]); exit; }
+            $st = $this->db->prepare("SELECT face_descriptor FROM usuarios WHERE identificacion = ? AND estado = 'activo' LIMIT 1");
+            $st->execute([$ident]);
+            $fd = $st->fetchColumn();
+            echo json_encode(['descriptor' => $fd ?: null]);
+        } catch (\Throwable $e) { echo json_encode(['descriptor' => null]); }
+        exit;
+    }
+
     public function identificar() {
         header('Content-Type: application/json');
         try {
@@ -76,10 +93,27 @@ class KioscoController {
             elseif ($ultima === 'salida_almuerzo') $tipo = 'regreso_almuerzo';
             elseif ($ultima === 'regreso_almuerzo') $tipo = 'salida';
 
-            // ===== AUTO-VALIDACIÓN EN KIOSCO =====
-            // El kiosco está físicamente en la sede: la presencia ya está confirmada.
+            // ===== LECTOR FACIAL (resultado enviado por el kiosco) =====
+            $face_status = (string)($data['face_status'] ?? 'compat');
+            $face_distance = $data['face_distance'] !== null ? round((float)$data['face_distance'], 2) : null;
+
             $estado = 'validado';
             $obs = '[MARCACIÓN DESDE KIOSCO FÍSICO] [AUTO-VALIDADO: dispositivo en sede]';
+            if ($face_status === 'ok') {
+                $obs .= ' [ROSTRO OK d=' . $face_distance . ']';
+            } elseif ($face_status === 'sin_vector') {
+                $obs .= ' [SIN ROSTRO ENROLADO: foto como evidencia]';
+            } elseif ($face_status === 'compat') {
+                $obs .= ' [SIN IA EN DISPOSITIVO: foto como evidencia]';
+            } elseif ($face_status === 'sin_rostro') {
+                $estado = 'pendiente';
+                $obs .= ' [SIN ROSTRO DETECTADO: revisar foto]';
+            } elseif ($face_status === 'no_coincide') {
+                $estado = 'pendiente';
+                $obs .= ' [ROSTRO NO COINCIDE d=' . $face_distance . ']';
+            }
+
+            // ===== Turno del día (Panel) =====
             $stT = $this->db->prepare("SELECT tc.codigo, pt.es_descanso, pt.es_vacacion, pt.nombre AS turno_nombre
                                        FROM turnos_calendario tc LEFT JOIN parametros_turnos pt ON pt.codigo = tc.codigo
                                        WHERE tc.usuario_id = ? AND tc.fecha = ? LIMIT 1");
@@ -88,15 +122,20 @@ class KioscoController {
             $nombreEmp = $usuario['nombre_completo'] ?? $ident;
 
             if ($turno && (int)$turno['es_vacacion'] === 1) {
-                $estado = 'pendiente'; // 🌴 excepción: no debería marcar
+                $estado = 'pendiente';
                 $obs .= ' [VACACIONES según panel]';
                 $this->alertarRRHH($empresa_id, 'vacacion', '🌴 Marcación en VACACIONES (kiosco)', $nombreEmp . ' marcó en el kiosco estando en vacaciones (' . date('d/m H:i') . ').', 2);
             } elseif ($turno && (int)$turno['es_descanso'] === 1) {
-                // 😴 Día libre trabajado: se VALIDA y queda marcado como candidato a horas extra
                 $obs .= ' [DÍA LIBRE según panel: candidato a horas extra]';
                 $this->alertarRRHH($empresa_id, 'dia_libre', '😴 Marcación en día LIBRE (kiosco)', $nombreEmp . ' marcó en su día de descanso (' . date('d/m H:i') . '). Candidato a horas extra.', 1);
             } elseif (!$turno) {
                 $obs .= ' [SIN TURNO PROGRAMADO hoy]';
+            }
+
+            if ($face_status === 'no_coincide') {
+                $this->alertarRRHH($empresa_id, 'rostro', '⚠️ Rostro no coincide (kiosco)', 'Posible suplantación de ' . $nombreEmp . ' en el kiosco (' . date('d/m H:i') . ', d=' . $face_distance . ').', 3);
+            } elseif ($face_status === 'sin_rostro') {
+                $this->alertarRRHH($empresa_id, 'rostro_manual', '📷 Kiosco: sin rostro detectado', 'Marcación de ' . $nombreEmp . ' sin rostro visible (' . date('d/m H:i') . '). Revisar foto.', 2);
             }
 
             $metodo = 'kiosco';
