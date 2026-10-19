@@ -1,5 +1,5 @@
 <?php
-// app/Views/kiosco/index.php — KIOSCO v3.2 (público + lector facial + pantalla completa)
+// app/Views/kiosco/index.php — KIOSCO v3.0 (registro directo con cédula)
 $dispositivo = $dispositivo ?? null;
 $token_inicial = $dispositivo ? ($dispositivo['token_kiosco'] ?? '') : '';
 $nombre_sede = $dispositivo ? ($dispositivo['sede_nombre'] ?? '') : '';
@@ -14,7 +14,6 @@ $nombre_disp = $dispositivo ? ($dispositivo['nombre'] ?? '') : '';
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
 <style>
 :root{
   --primary:#03a950; --primary-dark:#02843c; --primary-light:#e6f9f0;
@@ -49,6 +48,8 @@ body{background:var(--bg);background-image:radial-gradient(circle at 15% 20%, rg
 .btn-k{width:100%;margin-top:14px;padding:18px;border:none;border-radius:14px;cursor:pointer;background:var(--primary);color:#fff;font-family:'Inter',sans-serif;font-size:1.05rem;font-weight:800;box-shadow:0 6px 16px rgba(3,169,80,.30);transition:all .2s;display:flex;align-items:center;justify-content:center;gap:10px;}
 .btn-k:active{background:var(--primary-dark);transform:translateY(-1px);}
 .btn-k:disabled{opacity:.6;cursor:wait;}
+.btn-ghost{width:100%;margin-top:10px;padding:13px;border-radius:14px;cursor:pointer;background:#fff;border:1.5px solid var(--border);color:var(--muted);font-family:'Inter',sans-serif;font-size:.88rem;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;}
+.btn-ghost:hover{border-color:var(--primary);color:var(--primary);}
 .keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px;}
 .keypad.mini{gap:8px;margin-top:12px;}
 .key{padding:16px 0;background:#fff;border:1.5px solid var(--border);border-radius:14px;font-family:'Inter',sans-serif;font-size:1.4rem;font-weight:800;color:var(--text);cursor:pointer;transition:all .12s;min-height:58px;display:flex;align-items:center;justify-content:center;}
@@ -58,7 +59,6 @@ body{background:var(--bg);background-image:radial-gradient(circle at 15% 20%, rg
 .key.fn.ok{background:var(--primary-light);border-color:var(--primary);color:var(--primary-dark);}
 .cam-wrap{position:relative;width:100%;max-width:340px;aspect-ratio:1/1;margin:0 auto;border-radius:24px;overflow:hidden;background:#0f172a;border:3px solid var(--primary);box-shadow:0 8px 24px rgba(3,169,80,.25);}
 .cam-wrap video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1);}
-.cam-wrap canvas.overlay{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;}
 .scan-line{position:absolute;left:0;right:0;height:3px;background:linear-gradient(90deg,transparent,var(--primary),transparent);box-shadow:0 0 14px var(--primary);animation:scan 2.2s linear infinite;}
 @keyframes scan{0%{top:0;}100%{top:100%;}}
 .cam-tag{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,.72);color:#fff;font-size:.72rem;font-weight:700;letter-spacing:1.5px;padding:6px 14px;border-radius:999px;white-space:nowrap;}
@@ -69,10 +69,8 @@ body{background:var(--bg);background-image:radial-gradient(circle at 15% 20%, rg
 .sede-chip{display:inline-flex;align-items:center;gap:8px;background:var(--primary-light);color:var(--primary-dark);border-radius:999px;padding:7px 14px;font-size:.8rem;font-weight:700;margin-bottom:14px;}
 .hint{font-size:.8rem;color:var(--muted);margin-top:10px;text-align:center;font-weight:600;}
 .hint b{color:var(--primary-dark);}
-.float-btn{position:fixed;bottom:52px;z-index:20;width:46px;height:46px;border-radius:50%;border:1.5px solid var(--border);background:#fff;color:var(--muted);font-size:1rem;cursor:pointer;box-shadow:var(--shadow);}
-.float-btn:hover{color:var(--primary);border-color:var(--primary);}
-.lock-btn{right:16px;}
-.fs-btn{right:72px;}
+.lock-btn{position:fixed;bottom:52px;right:16px;z-index:20;width:46px;height:46px;border-radius:50%;border:1.5px solid var(--border);background:#fff;color:var(--muted);font-size:1rem;cursor:pointer;box-shadow:var(--shadow);}
+.lock-btn:hover{color:var(--primary);border-color:var(--primary);}
 .success-ring{width:130px;height:130px;border-radius:50%;background:var(--primary-light);border:6px solid var(--primary);display:flex;align-items:center;justify-content:center;font-size:3.4rem;color:var(--primary);margin-bottom:18px;box-shadow:0 0 0 12px rgba(3,169,80,.12);animation:pulse 1.6s infinite;}
 @keyframes pulse{0%,100%{transform:scale(1);}50%{transform:scale(1.04);}}
 .success-type{display:inline-block;background:var(--primary);color:#fff;border-radius:999px;padding:8px 22px;font-weight:800;letter-spacing:1px;margin-top:8px;}
@@ -116,7 +114,7 @@ body{background:var(--bg);background-image:radial-gradient(circle at 15% 20%, rg
   </div>
 </div>
 
-<!-- ===== PANTALLA A: TOKEN ===== -->
+<!-- ===== PANTALLA A: TOKEN (solo si la URL no trae token) ===== -->
 <div class="screen" id="screen-token">
   <h1 class="screen-title"><i class="fas fa-plug"></i> Conectar Terminal</h1>
   <p class="screen-sub">Ingrese el código del dispositivo asignado a este equipo</p>
@@ -128,7 +126,7 @@ body{background:var(--bg);background-image:radial-gradient(circle at 15% 20%, rg
   </div>
 </div>
 
-<!-- ===== PANTALLA B: PIN ===== -->
+<!-- ===== PANTALLA B: PIN DEL DISPOSITIVO ===== -->
 <div class="screen" id="screen-pin">
   <h1 class="screen-title"><i class="fas fa-lock"></i> Desbloquear Kiosco</h1>
   <p class="screen-sub">
@@ -150,10 +148,10 @@ body{background:var(--bg);background-image:radial-gradient(circle at 15% 20%, rg
   </div>
 </div>
 
-<!-- ===== PANTALLA C: EMPLEADO (cédula + LECTOR FACIAL + foto auto) ===== -->
+<!-- ===== PANTALLA C: EMPLEADO (cédula + cámara + registro automático) ===== -->
 <div class="screen" id="screen-identify">
   <h1 class="screen-title"><i class="fas fa-id-card"></i> Registro de Asistencia</h1>
-  <p class="screen-sub">Digite su <b style="color:var(--primary-dark);">CÉDULA COMPLETA</b> y mire a la cámara<br><small>📸 Foto y 🤖 verificación facial automáticas al completar la cédula</small></p>
+  <p class="screen-sub">Digite su <b style="color:var(--primary-dark);">CÉDULA COMPLETA</b> y mire a la cámara<br><small>Al terminar de digitar, el registro y la foto se toman automáticamente</small></p>
   <div class="card wide">
     <?php if ($nombre_sede !== ''): ?>
     <div style="text-align:center;"><span class="sede-chip"><i class="fas fa-map-marker-alt"></i> <?= htmlspecialchars($nombre_sede) ?></span></div>
@@ -177,12 +175,10 @@ body{background:var(--bg);background-image:radial-gradient(circle at 15% 20%, rg
       <div>
         <div class="cam-wrap">
           <video id="video" autoplay playsinline muted></video>
-          <canvas id="overlay" class="overlay"></canvas>
           <div class="scan-line"></div>
-          <div class="cam-tag" id="camTag"><i class="fas fa-circle"></i> CÁMARA ACTIVA — MIRE AL FRENTE</div>
+          <div class="cam-tag"><i class="fas fa-circle"></i> CÁMARA ACTIVA — MIRE AL FRENTE</div>
         </div>
         <canvas id="canvas" style="display:none;"></canvas>
-        <p class="hint" id="faceHint">🤖 Lector facial: cargando modelos…</p>
       </div>
     </div>
   </div>
@@ -197,20 +193,15 @@ body{background:var(--bg);background-image:radial-gradient(circle at 15% 20%, rg
   <p class="screen-sub" style="margin-top:16px;">Listo para el siguiente empleado en <b id="countdown">5</b> s…</p>
 </div>
 
-<button class="float-btn fs-btn" title="Pantalla completa" onclick="toggleFullscreen()"><i class="fas fa-expand"></i></button>
-<button class="float-btn lock-btn" title="Bloquear kiosco (solo coordinador)" onclick="bloquear()"><i class="fas fa-lock"></i></button>
+<button class="lock-btn" title="Bloquear kiosco (solo coordinador)" onclick="bloquear()"><i class="fas fa-lock"></i></button>
 
-<div class="status-bar"><i class="fas fa-circle"></i> SISTEMA EN LÍNEA · <b>KIOSCO v3.2</b> · <?= htmlspecialchars($nombre_disp ?: 'TERMINAL LIBRE') ?> · <?= date('Y-m-d') ?></div>
+<div class="status-bar"><i class="fas fa-circle"></i> SISTEMA EN LÍNEA · <b>KIOSCO v3.0</b> · <?= htmlspecialchars($nombre_disp ?: 'TERMINAL LIBRE') ?> · <?= date('Y-m-d') ?></div>
 
 <script>
 const B = '/horion-time/public';
-const UMBRAL = 0.55;
 let TOKEN_ACTUAL = <?= json_encode($token_inicial) ?>;
 let SEDE_ID = <?= $dispositivo ? (int)($dispositivo['sede_id'] ?? 0) : 'null' ?>;
 let stream = null, fotoActual = null, enviando = false, autoTimer = null;
-let intentosPin = 0, bloqueadoHasta = 0;
-let modelosCargados = false, deteccionActiva = false;
-let ultimoDescriptor = null, empleadoDescriptor = null, faceStatusCache = '';
 
 const diasEs = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
 const mesesEs = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
@@ -226,93 +217,20 @@ function show(id){
   document.getElementById(id).classList.add('active');
 }
 
-// ===== PANTALLA COMPLETA =====
-function toggleFullscreen(){
-  try {
-    if (!document.fullscreenElement) {
-      const p = document.documentElement.requestFullscreen && document.documentElement.requestFullscreen();
-      if (p && p.catch) p.catch(()=>{});
-    } else {
-      const p = document.exitFullscreen && document.exitFullscreen();
-      if (p && p.catch) p.catch(()=>{});
-    }
-  } catch(e) {}
-}
-
-// ===== ARRANQUE PÚBLICO: PIN primero =====
+// ===== ARRANQUE: enlace público → SIEMPRE pide PIN primero =====
 window.addEventListener('load', () => {
-  if (TOKEN_ACTUAL) { show('screen-pin'); } else { show('screen-token'); }
+  if (TOKEN_ACTUAL) { show('screen-pin'); }
+  else { show('screen-token'); }
 });
 
 function abrirEmpleado(){
   document.getElementById('inpCedula').value = '';
-  empleadoDescriptor = null; ultimoDescriptor = null;
   show('screen-identify');
   iniciarCamara();
-  cargarModelosIA();
   setTimeout(() => document.getElementById('inpCedula').focus(), 300);
 }
 
-// ===== IA: modelos + detección =====
-async function cargarModelosIA(){
-  const hint = document.getElementById('faceHint');
-  try {
-    if (typeof faceapi === 'undefined') throw new Error('librería no disponible');
-    const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model/';
-    await Promise.race([
-      Promise.all([
-        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
-      ]),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000))
-    ]);
-    modelosCargados = true;
-    hint.innerHTML = '🤖 Lector facial <b style="color:var(--primary-dark)">ACTIVO</b>: verifica el rostro contra el enrolado.';
-    iniciarDeteccion();
-  } catch(e) {
-    modelosCargados = false;
-    hint.innerHTML = '📷 Sin IA en este dispositivo: la <b>foto</b> será la evidencia de la marcación.';
-  }
-}
-
-async function iniciarDeteccion(){
-  if (deteccionActiva) return;
-  deteccionActiva = true;
-  const v = document.getElementById('video');
-  const overlay = document.getElementById('overlay');
-  const ctx = overlay.getContext('2d');
-  const tag = document.getElementById('camTag');
-  const loop = async () => {
-    if (!deteccionActiva || !stream) return;
-    const activo = document.getElementById('screen-identify').classList.contains('active');
-    if (!activo) { deteccionActiva = false; return; }
-    try {
-      overlay.width = v.videoWidth; overlay.height = v.videoHeight;
-      ctx.clearRect(0, 0, overlay.width, overlay.height);
-      const det = await faceapi.detectSingleFace(v, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
-      if (det) {
-        ultimoDescriptor = det.descriptor;
-        const b = det.detection.box;
-        ctx.strokeStyle = '#03a950'; ctx.lineWidth = 4;
-        ctx.strokeRect(b.x, b.y, b.width, b.height);
-        if (empleadoDescriptor) {
-          const d = faceapi.euclideanDistance(det.descriptor, empleadoDescriptor);
-          if (d <= UMBRAL) { tag.innerHTML = '<i class="fas fa-user-check"></i> ROSTRO VERIFICADO (' + d.toFixed(2) + ')'; faceStatusCache = 'ok'; }
-          else { tag.innerHTML = '<i class="fas fa-user-slash"></i> ROSTRO NO COINCIDE (' + d.toFixed(2) + ')'; faceStatusCache = 'no_coincide'; }
-        } else {
-          tag.innerHTML = '<i class="fas fa-circle"></i> ROSTRO DETECTADO — digite la cédula';
-        }
-      } else {
-        tag.innerHTML = '<i class="fas fa-circle"></i> CÁMARA ACTIVA — MIRE AL FRENTE';
-      }
-    } catch(e) {}
-    setTimeout(loop, 500);
-  };
-  loop();
-}
-
-// ===== Token / PIN / bloqueo =====
+// ----- Token (solo si la URL no lo trae) -----
 function cargarDispositivo(){
   const t = document.getElementById('inpToken').value.trim();
   if (!t) return err('errToken','Ingrese el código del dispositivo');
@@ -320,37 +238,41 @@ function cargarDispositivo(){
   document.getElementById('inpPin').value = '';
   show('screen-pin');
 }
+
+// ----- PIN -----
 function tecla(v){
-  if (Date.now() < bloqueadoHasta) return;
   const inp = document.getElementById('inpPin');
   if (v === 'C') inp.value = inp.value.slice(0,-1);
   else if (v === 'OK') validarPin();
   else if (inp.value.length < 4) inp.value += v;
 }
 async function validarPin(){
-  if (Date.now() < bloqueadoHasta) { err('errPin', 'Espere ' + Math.ceil((bloqueadoHasta - Date.now())/1000) + ' s.'); return; }
   const pin = document.getElementById('inpPin').value;
   if (pin.length !== 4) return err('errPin','El PIN debe tener 4 dígitos');
   try{
-    const r = await fetch(B + '/kiosco/validarPin', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: TOKEN_ACTUAL, pin: pin }) });
+    const r = await fetch(B + '/kiosco/validarPin', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ token: TOKEN_ACTUAL, pin: pin })
+    });
     const d = await r.json();
-    if (d.success){ SEDE_ID = d.sede_id ?? SEDE_ID; intentosPin = 0; abrirEmpleado(); }
-    else {
-      intentosPin++;
+    if (d.success){
+      SEDE_ID = d.sede_id ?? SEDE_ID;
+      abrirEmpleado();
+    } else {
+      err('errPin', (d.message || 'PIN incorrecto') + ' — verifique en Dispositivos → PIN Acceso');
       document.getElementById('inpPin').value = '';
-      if (intentosPin >= 5) { bloqueadoHasta = Date.now() + 30000; err('errPin', '⛔ 5 intentos fallidos. Teclado bloqueado 30 s.'); }
-      else err('errPin', (d.message || 'PIN incorrecto') + ' · Intento ' + intentosPin + ' de 5');
     }
   }catch(e){ err('errPin','Error de conexión'); }
 }
+
+// ----- Bloqueo manual (coordinador) -----
 function bloquear(){
-  deteccionActiva = false;
   detenerCamara();
   document.getElementById('inpPin').value = '';
   show('screen-pin');
 }
 
-// ===== Cédula =====
+// ----- Cédula: teclado en pantalla + registro automático -----
 function teclaCed(v){
   const inp = document.getElementById('inpCedula');
   if (v === 'C') { inp.value = inp.value.slice(0,-1); programarAuto(); }
@@ -369,14 +291,17 @@ function programarAuto(){
   if (len >= 6) autoTimer = setTimeout(iniciarMarcacion, 1200);
 }
 
-// ===== Cámara y foto =====
+// ----- Cámara -----
 async function iniciarCamara(){
   try{
     stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:'user', width:{ideal:720} }, audio:false });
     document.getElementById('video').srcObject = stream;
   }catch(e){ console.warn('Sin cámara:', e); }
 }
-function detenerCamara(){ if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; }
+function detenerCamara(){
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+}
 function capturarFoto(){
   const v = document.getElementById('video'), c = document.getElementById('canvas');
   if (!v.videoWidth) return null;
@@ -384,17 +309,13 @@ function capturarFoto(){
   c.getContext('2d').drawImage(v,0,0);
   return c.toDataURL('image/jpeg',0.75);
 }
-function flash(){ const f = document.getElementById('flash'); f.classList.add('on'); setTimeout(() => f.classList.remove('on'), 180); }
-
-// ===== Registro con lector facial =====
-async function obtenerDescriptorEmpleado(ced){
-  try{
-    const r = await fetch(B + '/kiosco/obtenerDescriptorEmpleado', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: TOKEN_ACTUAL, identificacion: ced }) });
-    const d = await r.json();
-    return d.descriptor ? new Float32Array(JSON.parse(d.descriptor)) : null;
-  }catch(e){ return null; }
+function flash(){
+  const f = document.getElementById('flash');
+  f.classList.add('on');
+  setTimeout(() => f.classList.remove('on'), 180);
 }
 
+// ----- Registro -----
 async function iniciarMarcacion(){
   if (enviando) return;
   clearTimeout(autoTimer);
@@ -402,37 +323,13 @@ async function iniciarMarcacion(){
   if (ced.length < 5) return err('errIdent','Digite la cédula COMPLETA (mínimo 5 dígitos)');
   enviando = true;
   const btn = document.getElementById('btnMarcar');
-  btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verificando rostro…';
-
-  // 1) Rostro enrolado del empleado
-  empleadoDescriptor = await obtenerDescriptorEmpleado(ced);
-
-  // 2) Estado facial
-  let face_status = 'compat', face_distance = null;
-  if (modelosCargados) {
-    if (!ultimoDescriptor) {
-      try {
-        const v = document.getElementById('video');
-        const det = await faceapi.detectSingleFace(v, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
-        if (det) ultimoDescriptor = det.descriptor;
-      } catch(e) {}
-    }
-    if (!ultimoDescriptor) face_status = 'sin_rostro';
-    else if (!empleadoDescriptor) face_status = 'sin_vector';
-    else {
-      face_distance = faceapi.euclideanDistance(ultimoDescriptor, empleadoDescriptor);
-      face_status = (face_distance <= UMBRAL) ? 'ok' : 'no_coincide';
-    }
-  }
-
-  // 3) FOTO AUTOMÁTICA + registro
+  btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Registrando…';
   fotoActual = capturarFoto();
   if (fotoActual) flash();
-  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Registrando…';
   try{
     const r = await fetch(B + '/kiosco/identificar', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ identificacion: ced, sede_id: SEDE_ID, token: TOKEN_ACTUAL, foto_data: fotoActual, face_status: face_status, face_distance: face_distance })
+      body: JSON.stringify({ identificacion: ced, sede_id: SEDE_ID, token: TOKEN_ACTUAL, foto_data: fotoActual })
     });
     const d = await r.json();
     if (d.success){
@@ -443,7 +340,10 @@ async function iniciarMarcacion(){
       show('screen-success');
       let c = 5;
       document.getElementById('countdown').textContent = c;
-      const ci = setInterval(() => { c--; document.getElementById('countdown').textContent = c; if (c <= 0){ clearInterval(ci); abrirEmpleado(); } }, 1000);
+      const ci = setInterval(() => {
+        c--; document.getElementById('countdown').textContent = c;
+        if (c <= 0){ clearInterval(ci); abrirEmpleado(); }
+      }, 1000);
     } else err('errIdent', d.message || 'No fue posible registrar');
   }catch(e){ err('errIdent','Error de red'); }
   finally{ enviando = false; btn.disabled = false; btn.innerHTML = '<i class="fas fa-camera"></i> Registrar y tomar foto'; }
