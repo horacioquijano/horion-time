@@ -130,7 +130,7 @@ class KioscoController {
                 'fecha' => $hoy,
                 'tipo_marcacion' => $tipo,
                 'hora_registro' => date('H:i:s'),
-                'metodo_marcacion' => 'kiosco',
+                'metodo_marcacion' => 'facial',
                 'foto_evidencia' => $foto,
                 'estado' => $estado,
                 'observaciones' => $obs,
