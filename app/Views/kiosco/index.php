@@ -1,5 +1,5 @@
 <?php
-// app/Views/kiosco/index.php — KIOSCO v3.0 (registro directo con cédula)
+// app/Views/kiosco/index.php — KIOSCO v3.1 (enlace público con PIN primero)
 $dispositivo = $dispositivo ?? null;
 $token_inicial = $dispositivo ? ($dispositivo['token_kiosco'] ?? '') : '';
 $nombre_sede = $dispositivo ? ($dispositivo['sede_nombre'] ?? '') : '';
@@ -126,7 +126,29 @@ body{background:var(--bg);background-image:radial-gradient(circle at 15% 20%, rg
   </div>
 </div>
 
-<!-- ===== PANTALLA B: EMPLEADO (cédula + cámara + registro automático) ===== -->
+<!-- ===== PANTALLA B: PIN DEL DISPOSITIVO (primera pantalla del enlace público) ===== -->
+<div class="screen" id="screen-pin">
+  <h1 class="screen-title"><i class="fas fa-lock"></i> Desbloquear Kiosco</h1>
+  <p class="screen-sub">
+    <b>PIN de 4 dígitos del dispositivo</b> (solo personal autorizado)<br>
+    <?php if ($nombre_disp !== ''): ?>Terminal: <?= htmlspecialchars($nombre_disp) ?><?php if ($nombre_sede !== ''): ?> · <?= htmlspecialchars($nombre_sede) ?><?php endif; ?><br><?php endif; ?>
+    <small>Lo encuentra en el sistema: menú Dispositivos → columna "PIN Acceso"</small>
+  </p>
+  <div class="card">
+    <input type="password" id="inpPin" class="k-input" placeholder="• • • •" maxlength="4" readonly inputmode="numeric">
+    <div class="keypad">
+      <div class="key" onclick="tecla('1')">1</div><div class="key" onclick="tecla('2')">2</div><div class="key" onclick="tecla('3')">3</div>
+      <div class="key" onclick="tecla('4')">4</div><div class="key" onclick="tecla('5')">5</div><div class="key" onclick="tecla('6')">6</div>
+      <div class="key" onclick="tecla('7')">7</div><div class="key" onclick="tecla('8')">8</div><div class="key" onclick="tecla('9')">9</div>
+      <div class="key fn" onclick="tecla('C')"><i class="fas fa-backspace"></i></div>
+      <div class="key" onclick="tecla('0')">0</div>
+      <div class="key fn ok" onclick="tecla('OK')"><i class="fas fa-check"></i></div>
+    </div>
+    <div class="err" id="errPin"></div>
+  </div>
+</div>
+
+<!-- ===== PANTALLA C: EMPLEADO (cédula + cámara + registro automático) ===== -->
 <div class="screen" id="screen-identify">
   <h1 class="screen-title"><i class="fas fa-id-card"></i> Registro de Asistencia</h1>
   <p class="screen-sub">Digite su <b style="color:var(--primary-dark);">CÉDULA COMPLETA</b> y mire a la cámara<br><small>Al terminar de digitar, el registro y la foto se toman automáticamente</small></p>
@@ -162,24 +184,6 @@ body{background:var(--bg);background-image:radial-gradient(circle at 15% 20%, rg
   </div>
 </div>
 
-<!-- ===== PANTALLA C: BLOQUEO (PIN solo coordinador) ===== -->
-<div class="screen" id="screen-pin">
-  <h1 class="screen-title"><i class="fas fa-lock"></i> Kiosco Bloqueado</h1>
-  <p class="screen-sub">PIN de 4 dígitos del dispositivo (solo personal autorizado)<br><small>Lo encuentra en el sistema: menú Dispositivos → columna "PIN Acceso"</small></p>
-  <div class="card">
-    <input type="password" id="inpPin" class="k-input" placeholder="• • • •" maxlength="4" readonly inputmode="numeric">
-    <div class="keypad">
-      <div class="key" onclick="tecla('1')">1</div><div class="key" onclick="tecla('2')">2</div><div class="key" onclick="tecla('3')">3</div>
-      <div class="key" onclick="tecla('4')">4</div><div class="key" onclick="tecla('5')">5</div><div class="key" onclick="tecla('6')">6</div>
-      <div class="key" onclick="tecla('7')">7</div><div class="key" onclick="tecla('8')">8</div><div class="key" onclick="tecla('9')">9</div>
-      <div class="key fn" onclick="tecla('C')"><i class="fas fa-backspace"></i></div>
-      <div class="key" onclick="tecla('0')">0</div>
-      <div class="key fn ok" onclick="tecla('OK')"><i class="fas fa-check"></i></div>
-    </div>
-    <div class="err" id="errPin"></div>
-  </div>
-</div>
-
 <!-- ===== PANTALLA D: ÉXITO ===== -->
 <div class="screen" id="screen-success">
   <div class="success-ring"><i class="fas fa-check"></i></div>
@@ -191,13 +195,14 @@ body{background:var(--bg);background-image:radial-gradient(circle at 15% 20%, rg
 
 <button class="lock-btn" title="Bloquear kiosco (solo coordinador)" onclick="bloquear()"><i class="fas fa-lock"></i></button>
 
-<div class="status-bar"><i class="fas fa-circle"></i> SISTEMA EN LÍNEA · <b>KIOSCO v3.0</b> · <?= htmlspecialchars($nombre_disp ?: 'TERMINAL LIBRE') ?> · <?= date('Y-m-d') ?></div>
+<div class="status-bar"><i class="fas fa-circle"></i> SISTEMA EN LÍNEA · <b>KIOSCO v3.1 PÚBLICO</b> · <?= htmlspecialchars($nombre_disp ?: 'TERMINAL LIBRE') ?> · <?= date('Y-m-d') ?></div>
 
 <script>
 const B = '/horion-time/public';
 let TOKEN_ACTUAL = <?= json_encode($token_inicial) ?>;
 let SEDE_ID = <?= $dispositivo ? (int)($dispositivo['sede_id'] ?? 0) : 'null' ?>;
 let stream = null, fotoActual = null, enviando = false, autoTimer = null;
+let intentosPin = 0, bloqueadoHasta = 0;
 
 const diasEs = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
 const mesesEs = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
@@ -213,10 +218,12 @@ function show(id){
   document.getElementById(id).classList.add('active');
 }
 
-// ----- Arranque: si hay token, directo a la pantalla del EMPLEADO -----
+// ===== ARRANQUE: enlace público → SIEMPRE pide PIN primero =====
 window.addEventListener('load', () => {
-  if (TOKEN_ACTUAL) { abrirEmpleado(); } else { show('screen-token'); }
+  if (TOKEN_ACTUAL) { show('screen-pin'); }
+  else { show('screen-token'); }
 });
+
 function abrirEmpleado(){
   document.getElementById('inpCedula').value = '';
   show('screen-identify');
@@ -224,27 +231,28 @@ function abrirEmpleado(){
   setTimeout(() => document.getElementById('inpCedula').focus(), 300);
 }
 
-// ----- Token (solo sin token en URL) -----
+// ----- Token (solo si la URL no lo trae) -----
 function cargarDispositivo(){
   const t = document.getElementById('inpToken').value.trim();
   if (!t) return err('errToken','Ingrese el código del dispositivo');
   TOKEN_ACTUAL = t;
-  abrirEmpleado();
-}
-
-// ----- Bloqueo / desbloqueo (coordinador) -----
-function bloquear(){
-  detenerCamara();
   document.getElementById('inpPin').value = '';
   show('screen-pin');
 }
+
+// ----- PIN con protección anti-fuerza bruta (5 intentos → pausa 30 s) -----
 function tecla(v){
+  if (Date.now() < bloqueadoHasta) return;
   const inp = document.getElementById('inpPin');
   if (v === 'C') inp.value = inp.value.slice(0,-1);
   else if (v === 'OK') validarPin();
   else if (inp.value.length < 4) inp.value += v;
 }
 async function validarPin(){
+  if (Date.now() < bloqueadoHasta) {
+    err('errPin', 'Demasiados intentos. Espere ' + Math.ceil((bloqueadoHasta - Date.now())/1000) + ' s.');
+    return;
+  }
   const pin = document.getElementById('inpPin').value;
   if (pin.length !== 4) return err('errPin','El PIN debe tener 4 dígitos');
   try{
@@ -255,12 +263,26 @@ async function validarPin(){
     const d = await r.json();
     if (d.success){
       SEDE_ID = d.sede_id ?? SEDE_ID;
+      intentosPin = 0;
       abrirEmpleado();
     } else {
-      err('errPin', (d.message || 'PIN incorrecto') + ' — verifique en Dispositivos → PIN Acceso');
+      intentosPin++;
       document.getElementById('inpPin').value = '';
+      if (intentosPin >= 5) {
+        bloqueadoHasta = Date.now() + 30000;
+        err('errPin', '⛔ 5 intentos fallidos. Teclado bloqueado 30 segundos.');
+      } else {
+        err('errPin', (d.message || 'PIN incorrecto') + ' · Intento ' + intentosPin + ' de 5');
+      }
     }
-  }catch(e){ err('errPin','Error de conexión'); }
+  }catch(e){ err('errPin','Error de conexión con el servidor'); }
+}
+
+// ----- Bloqueo manual (coordinador) -----
+function bloquear(){
+  detenerCamara();
+  document.getElementById('inpPin').value = '';
+  show('screen-pin');
 }
 
 // ----- Cédula: teclado en pantalla + registro automático -----
