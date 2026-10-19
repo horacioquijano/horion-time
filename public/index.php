@@ -164,25 +164,33 @@ if ($path === 'cambiarEmpresa') {
     exit;
 }
 
-// ============ GUARDIA DE SESIÓN ============
-if (!isset($_SESSION['usuario_id'])) { header('Location: ' . $BASE . '/login'); exit; }
-
-// ============ NUEVO: BLOQUEO DE MÓDULOS POR ROL ============
-$permisosRol = [
-    'SuperAdmin'    => '*',
-    'Admin_Empresa' => '*',
-    'RRHH'          => ['dashboard','usuarios','asistencia','horarios','novedades','horas_extras','reportes','notificaciones','portal','jefes','empresas'],
-    'Supervisor'    => ['dashboard','supervisor','asistencia','horarios','novedades','horas_extras','portal','notificaciones'],
-    'Auditor'       => ['dashboard','reportes','auditoria','portal'],
-    'Contador'      => ['dashboard','reportes','horas_extras','portal'],
-    'Empleado'      => ['dashboard','asistencia','portal','horarios','novedades','horas_extras'],
-];
+// ============================================================
+// 🆕 NUEVO: BYPASS DE SESIÓN PARA KIOSCO (enlace público)
+// El kiosco se autentica con TOKEN en la URL + PIN del dispositivo.
+// ============================================================
 $parts = explode('/', $path);
-$clave = $parts[0];
-if ($clave === 'sucursales') $clave = 'empresas';
-$listaRol = $permisosRol[$_SESSION['rol_nombre'] ?? 'Empleado'] ?? $permisosRol['Empleado'];
-if ($listaRol !== '*' && !in_array($clave, $listaRol, true)) {
-    header('Location: ' . $BASE . '/?error=acceso_denegado'); exit;
+$esKiosco = (isset($parts[0]) && $parts[0] === 'kiosco');
+
+// ============ GUARDIA DE SESIÓN ============
+if (!$esKiosco && !isset($_SESSION['usuario_id'])) { header('Location: ' . $BASE . '/login'); exit; }
+
+// ============ BLOQUEO DE MÓDULOS POR ROL (el kiosco NO aplica) ============
+if (!$esKiosco) {
+    $permisosRol = [
+        'SuperAdmin'    => '*',
+        'Admin_Empresa' => '*',
+        'RRHH'          => ['dashboard','usuarios','asistencia','horarios','novedades','horas_extras','reportes','notificaciones','portal','jefes','empresas'],
+        'Supervisor'    => ['dashboard','supervisor','asistencia','horarios','novedades','horas_extras','portal','notificaciones'],
+        'Auditor'       => ['dashboard','reportes','auditoria','portal'],
+        'Contador'      => ['dashboard','reportes','horas_extras','portal'],
+        'Empleado'      => ['dashboard','asistencia','portal','horarios','novedades','horas_extras'],
+    ];
+    $clave = $parts[0];
+    if ($clave === 'sucursales') $clave = 'empresas';
+    $listaRol = $permisosRol[$_SESSION['rol_nombre'] ?? 'Empleado'] ?? $permisosRol['Empleado'];
+    if ($listaRol !== '*' && !in_array($clave, $listaRol, true)) {
+        header('Location: ' . $BASE . '/?error=acceso_denegado'); exit;
+    }
 }
 
 // ============ ENRUTADO DE MÓDULOS ============
