@@ -1,5 +1,5 @@
 <?php
-// app/Views/kiosco/index.php — KIOSCO v3.0 (registro directo con cédula)
+// app/Views/kiosco/index.php — KIOSCO v3.3 (público SIN PIN, directo a cédula)
 $dispositivo = $dispositivo ?? null;
 $token_inicial = $dispositivo ? ($dispositivo['token_kiosco'] ?? '') : '';
 $nombre_sede = $dispositivo ? ($dispositivo['sede_nombre'] ?? '') : '';
@@ -48,8 +48,6 @@ body{background:var(--bg);background-image:radial-gradient(circle at 15% 20%, rg
 .btn-k{width:100%;margin-top:14px;padding:18px;border:none;border-radius:14px;cursor:pointer;background:var(--primary);color:#fff;font-family:'Inter',sans-serif;font-size:1.05rem;font-weight:800;box-shadow:0 6px 16px rgba(3,169,80,.30);transition:all .2s;display:flex;align-items:center;justify-content:center;gap:10px;}
 .btn-k:active{background:var(--primary-dark);transform:translateY(-1px);}
 .btn-k:disabled{opacity:.6;cursor:wait;}
-.btn-ghost{width:100%;margin-top:10px;padding:13px;border-radius:14px;cursor:pointer;background:#fff;border:1.5px solid var(--border);color:var(--muted);font-family:'Inter',sans-serif;font-size:.88rem;font-weight:700;display:flex;align-items:center;justify-content:center;gap:8px;}
-.btn-ghost:hover{border-color:var(--primary);color:var(--primary);}
 .keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px;}
 .keypad.mini{gap:8px;margin-top:12px;}
 .key{padding:16px 0;background:#fff;border:1.5px solid var(--border);border-radius:14px;font-family:'Inter',sans-serif;font-size:1.4rem;font-weight:800;color:var(--text);cursor:pointer;transition:all .12s;min-height:58px;display:flex;align-items:center;justify-content:center;}
@@ -126,29 +124,7 @@ body{background:var(--bg);background-image:radial-gradient(circle at 15% 20%, rg
   </div>
 </div>
 
-<!-- ===== PANTALLA B: PIN DEL DISPOSITIVO ===== -->
-<div class="screen" id="screen-pin">
-  <h1 class="screen-title"><i class="fas fa-lock"></i> Desbloquear Kiosco</h1>
-  <p class="screen-sub">
-    <b>PIN de 4 dígitos del dispositivo</b> (solo personal autorizado)<br>
-    <?php if ($nombre_disp !== ''): ?>Terminal: <?= htmlspecialchars($nombre_disp) ?><?php if ($nombre_sede !== ''): ?> · <?= htmlspecialchars($nombre_sede) ?><?php endif; ?><br><?php endif; ?>
-    <small>Lo encuentra en el sistema: menú Dispositivos → columna "PIN Acceso"</small>
-  </p>
-  <div class="card">
-    <input type="password" id="inpPin" class="k-input" placeholder="• • • •" maxlength="4" readonly inputmode="numeric">
-    <div class="keypad">
-      <div class="key" onclick="tecla('1')">1</div><div class="key" onclick="tecla('2')">2</div><div class="key" onclick="tecla('3')">3</div>
-      <div class="key" onclick="tecla('4')">4</div><div class="key" onclick="tecla('5')">5</div><div class="key" onclick="tecla('6')">6</div>
-      <div class="key" onclick="tecla('7')">7</div><div class="key" onclick="tecla('8')">8</div><div class="key" onclick="tecla('9')">9</div>
-      <div class="key fn" onclick="tecla('C')"><i class="fas fa-backspace"></i></div>
-      <div class="key" onclick="tecla('0')">0</div>
-      <div class="key fn ok" onclick="tecla('OK')"><i class="fas fa-check"></i></div>
-    </div>
-    <div class="err" id="errPin"></div>
-  </div>
-</div>
-
-<!-- ===== PANTALLA C: EMPLEADO (cédula + cámara + registro automático) ===== -->
+<!-- ===== PANTALLA B: EMPLEADO (cédula + cámara + registro automático) ===== -->
 <div class="screen" id="screen-identify">
   <h1 class="screen-title"><i class="fas fa-id-card"></i> Registro de Asistencia</h1>
   <p class="screen-sub">Digite su <b style="color:var(--primary-dark);">CÉDULA COMPLETA</b> y mire a la cámara<br><small>Al terminar de digitar, el registro y la foto se toman automáticamente</small></p>
@@ -184,7 +160,7 @@ body{background:var(--bg);background-image:radial-gradient(circle at 15% 20%, rg
   </div>
 </div>
 
-<!-- ===== PANTALLA D: ÉXITO ===== -->
+<!-- ===== PANTALLA C: ÉXITO ===== -->
 <div class="screen" id="screen-success">
   <div class="success-ring"><i class="fas fa-check"></i></div>
   <h1 class="screen-title" id="nombreUsuario">¡Bienvenido!</h1>
@@ -195,7 +171,7 @@ body{background:var(--bg);background-image:radial-gradient(circle at 15% 20%, rg
 
 <button class="lock-btn" title="Bloquear kiosco (solo coordinador)" onclick="bloquear()"><i class="fas fa-lock"></i></button>
 
-<div class="status-bar"><i class="fas fa-circle"></i> SISTEMA EN LÍNEA · <b>KIOSCO v3.0</b> · <?= htmlspecialchars($nombre_disp ?: 'TERMINAL LIBRE') ?> · <?= date('Y-m-d') ?></div>
+<div class="status-bar"><i class="fas fa-circle"></i> SISTEMA EN LÍNEA · <b>KIOSCO v3.3</b> · <?= htmlspecialchars($nombre_disp ?: 'TERMINAL LIBRE') ?> · <?= date('Y-m-d') ?></div>
 
 <script>
 const B = '/horion-time/public';
@@ -217,9 +193,9 @@ function show(id){
   document.getElementById(id).classList.add('active');
 }
 
-// ===== ARRANQUE: enlace público → SIEMPRE pide PIN primero =====
+// ===== ARRANQUE: SI hay token, directo a cédula. Si no, pedir token. =====
 window.addEventListener('load', () => {
-  if (TOKEN_ACTUAL) { show('screen-pin'); }
+  if (TOKEN_ACTUAL) { abrirEmpleado(); }
   else { show('screen-token'); }
 });
 
@@ -235,41 +211,13 @@ function cargarDispositivo(){
   const t = document.getElementById('inpToken').value.trim();
   if (!t) return err('errToken','Ingrese el código del dispositivo');
   TOKEN_ACTUAL = t;
-  document.getElementById('inpPin').value = '';
-  show('screen-pin');
-}
-
-// ----- PIN -----
-function tecla(v){
-  const inp = document.getElementById('inpPin');
-  if (v === 'C') inp.value = inp.value.slice(0,-1);
-  else if (v === 'OK') validarPin();
-  else if (inp.value.length < 4) inp.value += v;
-}
-async function validarPin(){
-  const pin = document.getElementById('inpPin').value;
-  if (pin.length !== 4) return err('errPin','El PIN debe tener 4 dígitos');
-  try{
-    const r = await fetch(B + '/kiosco/validarPin', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ token: TOKEN_ACTUAL, pin: pin })
-    });
-    const d = await r.json();
-    if (d.success){
-      SEDE_ID = d.sede_id ?? SEDE_ID;
-      abrirEmpleado();
-    } else {
-      err('errPin', (d.message || 'PIN incorrecto') + ' — verifique en Dispositivos → PIN Acceso');
-      document.getElementById('inpPin').value = '';
-    }
-  }catch(e){ err('errPin','Error de conexión'); }
+  abrirEmpleado();
 }
 
 // ----- Bloqueo manual (coordinador) -----
 function bloquear(){
   detenerCamara();
-  document.getElementById('inpPin').value = '';
-  show('screen-pin');
+  show('screen-token');
 }
 
 // ----- Cédula: teclado en pantalla + registro automático -----
