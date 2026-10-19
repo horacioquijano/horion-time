@@ -47,7 +47,7 @@ if (substr($path, -4) === '.php' && $path !== 'index.php') {
     $real = __DIR__ . '/' . $path;
     if (file_exists($real)) { require $real; exit; }
     http_response_code(404);
-    die("❌ El archivo <b>public/" . htmlspecialchars($path) . "</b> NO existe.");
+    die(" El archivo <b>public/" . htmlspecialchars($path) . "</b> NO existe.");
 }
 
 // ============ LOGIN ============
@@ -165,8 +165,7 @@ if ($path === 'cambiarEmpresa') {
 }
 
 // ============================================================
-// 🆕 NUEVO: BYPASS DE SESIÓN PARA KIOSCO (enlace público)
-// El kiosco se autentica con TOKEN en la URL + PIN del dispositivo.
+// 🆕 BYPASS DE SESIÓN PARA KIOSCO (enlace público)
 // ============================================================
 $parts = explode('/', $path);
 $esKiosco = (isset($parts[0]) && $parts[0] === 'kiosco');
@@ -199,6 +198,11 @@ $method = $parts[1] ?? 'index';
 $params = array_slice($parts, 2);
 if ($parts[0] === 'jefes' && $method === 'index') $method = 'jefes';
 
+// ✅ NUEVO: Agregar ruta de mantenimiento
+if ($parts[0] === 'mantenimiento') {
+    $controllerName = 'MantenimientoController';
+}
+
 $map = [
     'DashboardController'      => 'App\\Controllers\\DashboardController',
     'EmpresasController'       => 'App\\Controllers\\EmpresaController',
@@ -218,6 +222,7 @@ $map = [
     'ConfiguracionController'  => 'App\\Controllers\\ConfiguracionController',
     'DispositivosController'   => 'App\\Controllers\\DispositivoController',
     'KioscoController'         => 'App\\Controllers\\KioscoController',
+    'MantenimientoController'  => 'App\\Controllers\\MantenimientoController',
 ];
 
 if (isset($map[$controllerName])) {
