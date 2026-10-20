@@ -39,28 +39,102 @@ class AsistenciaController {
     }
     
     public function exportar() {
+        require_once __DIR__ . '/../Libs/MiniXLSXWriter.php';
+        
         $filtros = $this->filtros();
         $marcaciones = $this->model->getMarcacionesFiltradas($filtros);
-        $nombre = 'asistencia_' . $filtros['fecha_desde'] . '_a_' . $filtros['fecha_hasta'] . '.csv';
-        header('Content-Type: text/csv; charset=UTF-8');
-        header('Content-Disposition: attachment; filename="' . $nombre . '"');
-        $out = fopen('php://output', 'w');
-        fwrite($out, "\xEF\xBB\xBF");
-        fputcsv($out, ['Fecha','Hora','Empleado','Cédula','Tipo','Método','Sede','Turno del día','Horario turno','Estado','Observaciones','Lat','Lng']);
+        
+        // 1. Agrupar por empleado para el resumen
+        $porEmpleado = [];
+        foreach ($marcaciones as $m) {
+            $ced = $m['identificacion'] ?? 'N/A';
+            if (!isset($porEmpleado[$ced])) {
+                $porEmpleado[$ced] = [
+                    'nombre' => $m['nombre_completo'] ?? 'N/A',
+                    'cargo' => $m['cargo'] ?? 'N/A',
+                    'sede' => $m['sede_nombre'] ?? 'N/A',
+                    'dias' => [],
+                    'total' => 0,
+                    'entradas' => 0,
+                    'salidas' => 0,
+                    'validadas' => 0,
+                    'pendientes' => 0,
+                ];
+            }
+            $porEmpleado[$ced]['dias'][] = $m['fecha'];
+            $porEmpleado[$ced]['total']++;
+            if ($m['tipo_marcacion'] === 'entrada') $porEmpleado[$ced]['entradas']++;
+            if (strpos($m['tipo_marcacion'], 'salida') !== false) $porEmpleado[$ced]['salidas']++;
+            if ($m['estado'] === 'validado') $porEmpleado[$ced]['validadas']++;
+            if ($m['estado'] === 'pendiente') $porEmpleado[$ced]['pendientes']++;
+        }
+        
+        $hoja = [];
+        
+        // 2. Encabezado del reporte
+        $hoja[] = ['REPORTE DE ASISTENCIA - HORION TIME'];
+        $hoja[] = ["Período: " . $filtros['fecha_desde'] . " a " . $filtros['fecha_hasta']];
+        $hoja[] = ["Generado: " . date('d/m/Y H:i')];
+        $hoja[] = [];
+        
+        // 3. Resumen por empleado
+        $hoja[] = ['RESUMEN POR EMPLEADO'];
+        $hoja[] = ['Cédula', 'Nombre', 'Cargo', 'Sede Principal', 'Días Asistidos', 'Total Marcaciones', 'Entradas', 'Salidas', 'Validadas', 'Pendientes'];
+        
+        foreach ($porEmpleado as $ced => $emp) {
+            $diasUnicos = count(array_unique($emp['dias']));
+            $hoja[] = [
+                $ced,
+                $emp['nombre'],
+                $emp['cargo'],
+                $emp['sede'],
+                $diasUnicos,
+                $emp['total'],
+                $emp['entradas'],
+                $emp['salidas'],
+                $emp['validadas'],
+                $emp['pendientes'],
+            ];
+        }
+        
+        $hoja[] = [];
+        $hoja[] = [];
+        
+        // 4. Detalle completo de marcaciones
+        $hoja[] = ['DETALLE DE MARCACIONES'];
+        $hoja[] = ['Cédula', 'Nombre', 'Fecha', 'Hora', 'Tipo', 'Método', 'Sede', 'Turno', 'Horario Turno', 'Estado', 'Observaciones'];
+        
         foreach ($marcaciones as $m) {
             $turno = $m['turno_codigo'] ?? '';
             $horario = '';
             if ($turno !== '' && !empty($m['turno_entrada'])) {
                 $horario = substr($m['turno_entrada'], 0, 5) . '-' . substr($m['turno_salida'], 0, 5);
             }
-            fputcsv($out, [
-                $m['fecha'], $m['hora_registro'], $m['nombre_completo'] ?? '', $m['identificacion'] ?? '',
-                $m['tipo_marcacion'], $m['metodo_marcacion'], $m['sede_nombre'] ?? '',
-                $turno !== '' ? $turno : 'SIN TURNO', $horario, $m['estado'],
-                $m['observaciones'] ?? '', $m['lat'] ?? '', $m['lng'] ?? '',
-            ]);
+            $hoja[] = [
+                $m['identificacion'] ?? '',
+                $m['nombre_completo'] ?? '',
+                date('d/m/Y', strtotime($m['fecha'])),
+                $m['hora_registro'],
+                ucfirst(str_replace('_', ' ', $m['tipo_marcacion'])),
+                ucfirst($m['metodo_marcacion']),
+                $m['sede_nombre'] ?? 'N/A',
+                $turno !== '' ? $turno : 'SIN TURNO',
+                $horario,
+                ucfirst($m['estado']),
+                $m['observaciones'] ?? '',
+            ];
         }
-        fclose($out);
+        
+        // 5. Generar y descargar archivo XLSX
+        $tmp = tempnam(sys_get_temp_dir(), 'asistencia_') . '.xlsx';
+        \App\Libs\MiniXLSXWriter::crear(['Asistencia' => $hoja], $tmp, ['Asistencia' => [0, 2, 4]]);
+        
+        $nombre = 'Reporte_Asistencia_' . $filtros['fecha_desde'] . '_al_' . $filtros['fecha_hasta'] . '.xlsx';
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment; filename="' . $nombre . '"');
+        header('Content-Length: ' . filesize($tmp));
+        readfile($tmp);
+        @unlink($tmp);
         exit;
     }
     
@@ -107,8 +181,7 @@ class AsistenciaController {
             $observaciones = trim((string)($_POST['observaciones'] ?? ''));
             $sede_id = !empty($_POST['sede_id']) ? (int)$_POST['sede_id'] : null;
             
-            // ----- CANDADO GPS -----
-            $ok_gps = null; // true=dentro/sin georef, false=fuera, null=sin GPS
+            $ok_gps = null;
             if (!empty($_POST['lat']) && !empty($_POST['lng'])) {
                 if ($sede_id) {
                     $distancia = $this->calcularDistancia($sede_id, (float)$_POST['lat'], (float)$_POST['lng']);
@@ -131,13 +204,12 @@ class AsistenciaController {
                 $observaciones = trim($observaciones . " [SIN GPS]");
             }
             
-            // ----- CANDADO ROSTRO -----
             $live = json_decode((string)($_POST['face_descriptor'] ?? ''), true);
             $live_ok = is_array($live) && count($live) === 128;
             $st = $this->db->prepare("SELECT face_descriptor FROM usuarios WHERE id = ? LIMIT 1");
             $st->execute([$uid]);
             $guardado = $st->fetchColumn();
-            $ok_face = null; // true, false, o 'manual'
+            $ok_face = null;
             if ($live_ok) {
                 if (empty($guardado)) {
                     $this->guardarDescriptor($uid, json_encode($live));
@@ -169,7 +241,6 @@ class AsistenciaController {
                 }
             }
             
-            // ----- TURNO DE HOY (Panel) -----
             $turno = $this->turnoDeHoy($uid);
             $es_vacacion = $turno && (int)$turno['es_vacacion'] === 1;
             $es_libre    = $turno && (int)$turno['es_descanso'] === 1;
@@ -177,9 +248,6 @@ class AsistenciaController {
             elseif ($es_libre) $observaciones = trim("[DÍA LIBRE según panel: candidato a horas extra] " . $observaciones);
             elseif (!$turno) $observaciones = trim("[SIN TURNO PROGRAMADO] " . $observaciones);
             
-            // ===== AUTO-VALIDACIÓN (sin aprobación manual en flujo normal) =====
-            // Dentro del radio de la sede = presencia confirmada → el sistema valida SOLO.
-            // RRHH solo revisa excepciones: vacaciones, rostro no coincide, fuera de rango, sin GPS.
             $estado = 'pendiente';
             if ($es_vacacion) {
                 $estado = 'pendiente';
@@ -204,9 +272,7 @@ class AsistenciaController {
                 'foto_evidencia' => $foto, 'lat' => $_POST['lat'] ?? null, 'lng' => $_POST['lng'] ?? null,
                 'estado' => $estado, 'observaciones' => $observaciones, 'creado_por' => $uid,
             ]);
-            $refId = (int)$this->db->lastInsertId();
             
-            // ----- ALERTAS AUTOMÁTICAS (solo excepciones) -----
             $nombreEmp = $_SESSION['nombre_completo'] ?? ('Usuario ' . $uid);
             $hora = date('d/m H:i');
             if ($ok_gps === false) $this->alertarRRHH($empresa_id, 'geocerca', '🚨 Marcación fuera de rango', $nombreEmp . ' marcó fuera del radio (' . $hora . ').', 2);
@@ -235,10 +301,6 @@ class AsistenciaController {
         $volver = $_SERVER['HTTP_REFERER'] ?? '/horion-time/public/asistencia';
         header('Location: ' . $volver); exit;
     }
-    
-    // =====================================================
-    // CONTROL DEL DÍA (detalle coordinadores/jefes de área)
-    // =====================================================
     
     private function rolesControlDia(): bool {
         return in_array($_SESSION['rol_nombre'] ?? '', ['SuperAdmin', 'Admin_Empresa', 'RRHH', 'Supervisor'], true);
@@ -299,10 +361,6 @@ class AsistenciaController {
         exit;
     }
     
-    // =====================================================
-    // ALERTAS AUTOMÁTICAS
-    // =====================================================
-    
     private function turnoDeHoy($uid) {
         try {
             $st = $this->db->prepare("SELECT tc.codigo, pt.es_descanso, pt.es_vacacion, pt.nombre AS turno_nombre
@@ -343,10 +401,6 @@ class AsistenciaController {
             $st->execute();
         } catch (\Throwable $e) { /* silencioso */ }
     }
-    
-    // =====================================================
-    // CUMPLIMIENTO (FASE B)
-    // =====================================================
     
     private function rolesReporte(): bool {
         return in_array($_SESSION['rol_nombre'] ?? '', ['SuperAdmin', 'Admin_Empresa', 'RRHH', 'Auditor', 'Contador'], true);
@@ -390,9 +444,6 @@ class AsistenciaController {
         fclose($out); exit;
     }
     
-    // =====================================================
-    // ROSTRO
-    // =====================================================
     public function obtenerDescriptor() {
         header('Content-Type: application/json');
         try {
@@ -414,9 +465,6 @@ class AsistenciaController {
         return sqrt($sum);
     }
     
-    // =====================================================
-    // GPS
-    // =====================================================
     private function calcularDistancia($sede_id, $lat_empleado, $lng_empleado) {
         $sede = $this->obtenerSede($sede_id);
         if (!$sede || !$sede['lat_ref'] || !$sede['lng_ref']) return null;
