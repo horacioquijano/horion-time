@@ -14,7 +14,6 @@ $estadoF  = $_GET['estado'] ?? '';
 $sedeF    = $_GET['sede'] ?? '';
 $empresaF = $_GET['empresa'] ?? '';
 
-// KPIs
 $total      = count($marcaciones);
 $validadas  = count(array_filter($marcaciones, fn($m) => ($m['estado'] ?? '') === 'validado'));
 $pendientes = count(array_filter($marcaciones, fn($m) => ($m['estado'] ?? '') === 'pendiente'));
@@ -27,7 +26,7 @@ $fueraRango = count(array_filter($marcaciones, fn($m) => stripos((string)($m['ob
         <i class="fas fa-clipboard-list" style="color:var(--primary);"></i> Registro de Asistencia
     </h2>
     <a class="btn btn-primary" style="text-decoration:none;" href="<?= $b ?>/asistencia/exportar?<?= htmlspecialchars(http_build_query($_GET)) ?>">
-        <i class="fas fa-file-excel"></i> Exportar CSV
+        <i class="fas fa-file-excel"></i> Exportar Reporte XLSX
     </a>
 </div>
 
@@ -37,7 +36,6 @@ $fueraRango = count(array_filter($marcaciones, fn($m) => stripos((string)($m['ob
 </div>
 <?php endif; ?>
 
-<!-- ===== FILTROS ===== -->
 <div class="card-3d" style="padding:16px 18px;margin-bottom:20px;">
     <form method="GET" action="<?= $b ?>/asistencia" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-items:end;">
         <div>
@@ -88,7 +86,6 @@ $fueraRango = count(array_filter($marcaciones, fn($m) => stripos((string)($m['ob
     </form>
 </div>
 
-<!-- ===== KPIs ===== -->
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:20px;">
     <div class="card-3d" style="padding:14px 18px;">
         <div style="color:var(--text-muted);font-size:.8rem;font-weight:600;">TOTAL</div>
@@ -112,7 +109,6 @@ $fueraRango = count(array_filter($marcaciones, fn($m) => stripos((string)($m['ob
     </div>
 </div>
 
-<!-- ===== TABLA ===== -->
 <div class="card-3d" style="overflow-x:auto;">
     <table class="data-table" style="min-width:1150px;font-size:.83rem;">
         <thead>
@@ -137,7 +133,6 @@ $fueraRango = count(array_filter($marcaciones, fn($m) => stripos((string)($m['ob
             $fuera = stripos($obs, 'FUERA DE RANGO') !== false;
             $sinGps = stripos($obs, '[SIN GPS]') !== false;
             
-            // Tardanza vs turno programado (tolerancia 10 min; noche cruza medianoche)
             $tardanza = false;
             if (!empty($m['turno_entrada']) && ($m['tipo_marcacion'] ?? '') === 'entrada') {
                 $tEnt = strtotime($m['fecha'] . ' ' . $m['turno_entrada']);
@@ -225,6 +220,9 @@ function accion(id, estado) {
     if (motivo.trim() === '') { alert('⚠️ El motivo es obligatorio.'); return; }
     window.location.href = '<?= $b ?>/asistencia/corregir/' + id + '?estado=' + estado + '&motivo=' + encodeURIComponent(motivo);
 }
+</script>
+
+<?php include __DIR__ . '/../layouts/footer.php'; ?>
 </script>
 
 <?php include __DIR__ . '/../layouts/footer.php'; ?>
