@@ -223,6 +223,3 @@ function accion(id, estado) {
 </script>
 
 <?php include __DIR__ . '/../layouts/footer.php'; ?>
-</script>
-
-<?php include __DIR__ . '/../layouts/footer.php'; ?>
